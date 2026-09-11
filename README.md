@@ -9,7 +9,7 @@ directory it was developed in remains untouched as a frozen reference.
 
 ## Try it
 
-Requires Node 18 or newer. Run these commands from this folder:
+Requires Node 22, the version CI tests. Run these commands from this folder:
 
 ```
 node station.mjs export

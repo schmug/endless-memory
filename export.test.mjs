@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { FIXTURES, exportFixture } from './test/update-fixtures.mjs';
+import { FIXTURES, exportOnce } from './test/update-fixtures.mjs';
 
 const dir = dirname(fileURLToPath(import.meta.url));
 
@@ -12,7 +12,7 @@ const dir = dirname(fileURLToPath(import.meta.url));
 for (const fixture of FIXTURES) {
   test(`export is byte-identical to the ${fixture.name} fixture`, async () => {
     const expected = await readFile(join(dir, 'test', 'fixtures', `${fixture.name}.strudel`), 'utf8');
-    const { strudel } = await exportFixture(fixture);
+    const { strudel } = await exportOnce(fixture);
     assert.equal(
       strudel,
       expected,
@@ -23,7 +23,8 @@ for (const fixture of FIXTURES) {
 
 test('the weathered-night fixture still exercises motif recall', async () => {
   const fixture = FIXTURES.find((f) => f.name === 'weathered-night');
-  const { score } = await exportFixture(fixture);
+  assert.ok(fixture, 'no fixture named weathered-night; update this test if it was renamed');
+  const { score } = await exportOnce(fixture);
   const recalled = score.filter((s) => s.recalled).length;
   assert.ok(recalled > 0, `anchor ${fixture.anchor} no longer covers the recall branch`);
 });
