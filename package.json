@@ -11,16 +11,14 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "@kabelsalat/web": "0.4.1",
-    "@strudel/core": "1.2.5",
-    "@strudel/mini": "^1.2.6"
-  },
+  "license": "MIT",
+  "dependencies": {},
   "overrides": {
     "@strudel/core": "$@strudel/core"
   },
   "devDependencies": {
+    "@strudel/core": "1.2.5",
+    "@strudel/mini": "^1.2.6",
     "@strudel/transpiler": "^1.2.6"
   }
 }
