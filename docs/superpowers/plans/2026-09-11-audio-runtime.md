@@ -715,9 +715,14 @@ export function eventsForCycles(startCycle, cycleCount, journal) {
   const events = [];
   for (let cycle = startCycle; cycle < startCycle + cycleCount; cycle++) {
     const sceneData = scene(sceneIndexForCycle(cycle), journal);
-    const drift = atmosphere(cycle, journal);
     for (const voice of VOICES) {
       for (const parsed of parseCycle(sceneData[voice.field], cycle)) {
+        // Drift is sampled per EVENT at its fractional position, not once per cycle.
+        // The exported score does exactly this:
+        //   atmosphere(Number((hap.whole || hap.part).begin) + startBar, journal)
+        // atmosphere() contains sine terms in `bar`, so an integer cycle gives a
+        // different value than the event's true fractional position.
+        const drift = atmosphere(parsed.begin, journal);
         events.push(build(voice, parsed, sceneData, drift));
       }
     }
