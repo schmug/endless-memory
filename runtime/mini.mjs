@@ -48,7 +48,13 @@ function parseNode(src, begin, end, out) {
     return;
   }
 
-  out.push({ value: Number(node), begin, end });
+  // Any shape outside the frozen grammar (an empty bracket, a bare word, NaN
+  // literals) must fail loudly here — a NaN value that reaches voices.mjs writes
+  // silent zero samples with no thrown error, a hole in the audio with a zero
+  // exit code.
+  const value = Number(node);
+  if (!Number.isFinite(value)) throw new Error(`mini: not a finite number: '${node}'`);
+  out.push({ value, begin, end });
 }
 
 export function parseCycle(pattern, cycle) {

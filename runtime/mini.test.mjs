@@ -83,3 +83,11 @@ test('parseCycle matches the oracle at boundary cycles including 0 and negatives
   }
   assert.ok(compared >= 48, `expected 48 comparisons, made ${compared}`);
 });
+
+test('parseCycle throws on a value outside the frozen grammar instead of producing NaN', () => {
+  // A NaN value that reached voices.mjs would write silent zero samples with no
+  // thrown error — a hole in the audio with a zero exit code.
+  assert.throws(() => parseCycle('bogus', 0), /not a finite number/);
+  assert.throws(() => parseCycle('[1 bogus 3]', 0), /not a finite number/);
+  assert.throws(() => parseCycle('<1 bogus>', 1), /not a finite number/);
+});

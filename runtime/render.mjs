@@ -26,30 +26,47 @@ export function renderChunk(startCycle, cycleCount, journal) {
 
 export const cycleForInstant = (iso) => Math.floor((Date.parse(iso) - EPOCH) / BAR_MS);
 
-// Dual-mono 16-bit LE. A silent chunk is a bug, not valid output.
-function toPcm(samples) {
+// Dual-mono 16-bit LE. A silent chunk is a bug, not valid output. Samples are
+// soft-clipped through tanh; occurrences (pre-clip |sample| > 1.0) are counted
+// rather than silently swallowed, so run() can report them.
+export function toPcm(samples) {
   const buf = Buffer.alloc(samples.length * 4);
   let peak = 0;
+  let clipped = 0;
   for (let i = 0; i < samples.length; i++) {
     const a = Math.abs(samples[i]);
     if (a > peak) peak = a;
+    if (a > 1.0) clipped++;
     const s = Math.max(-32768, Math.min(32767, Math.round(Math.tanh(samples[i]) * 32767)));
     buf.writeInt16LE(s, i * 4);
     buf.writeInt16LE(s, i * 4 + 2);
   }
-  return { buf, peak };
+  return { buf, peak, clipped };
 }
 
+// peak is always >= 0 (Math.abs starting from 0) and, barring a future refactor,
+// can never become NaN — but the guard is written against NaN directly rather
+// than against peak === 0, so a NaN peak trips it too instead of silently
+// passing (NaN === 0 is false; !(NaN > 0) is true).
+export const isSilent = (peak) => !(peak > 0);
+
 export async function run({ anchorCycle, chunkCycles = 8, sink, seconds = Infinity, journal }) {
+  validate(journal);
   const limit = seconds === Infinity ? Infinity : Math.ceil(seconds / CYCLE_SECONDS);
   let rendered = 0;
+  let totalClipped = 0;
+  let maxPeak = 0;
   for (let cycle = anchorCycle; rendered < limit; cycle += chunkCycles) {
     const count = Math.min(chunkCycles, limit - rendered);
-    const { buf, peak } = toPcm(renderChunk(cycle, count, journal));
-    if (peak === 0) throw new Error(`silent chunk at cycle ${cycle} — this is a bug, not valid output`);
+    const { buf, peak, clipped } = toPcm(renderChunk(cycle, count, journal));
+    if (isSilent(peak)) throw new Error(`silent chunk at cycle ${cycle} — this is a bug, not valid output`);
+    totalClipped += clipped;
+    if (peak > maxPeak) maxPeak = peak;
     if (!sink.write(buf)) await once(sink, 'drain');
     rendered += count;
   }
+  // stderr, never stdout — stdout is a PCM channel (see F1/the stdout-banner incident).
+  console.error(`render: ${rendered} cycles, peak ${maxPeak.toFixed(4)}, ${totalClipped} clipped sample(s)`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -62,9 +79,17 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
   const out = arg('out');
   if (!out) throw new Error('usage: node runtime/render.mjs --anchor <ISO> --out <path> [--chunk-cycles 8] [--seconds N]');
+
+  const anchorArg = arg('anchor', new Date().toISOString());
+  const anchorCycle = cycleForInstant(anchorArg);
+  if (!Number.isFinite(anchorCycle)) {
+    console.error(`invalid --anchor value: '${anchorArg}' does not parse as a date`);
+    process.exit(1);
+  }
+
   const sink = createWriteStream(out);
   await run({
-    anchorCycle: cycleForInstant(arg('anchor', new Date().toISOString())),
+    anchorCycle,
     chunkCycles: Number(arg('chunk-cycles', 8)),
     seconds: arg('seconds') ? Number(arg('seconds')) : Infinity,
     sink,

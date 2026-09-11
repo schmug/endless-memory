@@ -8,7 +8,10 @@ import { midiToHz } from './voices.mjs';
 // One cycle is one bar; scene i covers cycles [i*BARS, (i+1)*BARS).
 export const sceneIndexForCycle = (cycle) => Math.floor(cycle / BARS);
 
-function build(voice, parsed, sceneData, drift) {
+// Exported only for the unrecognised-filter-type test — schedule.test.mjs cannot
+// otherwise construct a voice with a bad filter shape (composer.mjs's real
+// VOICES table only ever emits 'lpf'/'hpf').
+export function build(voice, parsed, sceneData, drift) {
   const evt = {
     wave: voice.wave,
     attack: voice.attack,
@@ -28,7 +31,8 @@ function build(voice, parsed, sceneData, drift) {
     const value = filter.dynamic ? sceneData[filter.dynamic] : filter.value;
     if (filter.dynamic) isChords = true;
     if (filter.type === 'lpf') evt.cutoff = value;
-    else evt.hcutoff = value;
+    else if (filter.type === 'hpf') evt.hcutoff = value;
+    else throw new Error(`schedule: unrecognised filter type '${filter.type}'`);
   }
 
   // The exported score replaces the chords voice's cutoff and release with the drifting
