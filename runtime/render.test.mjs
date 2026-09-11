@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { BARS } from '../composer.mjs';
 import { sampleAt } from './voices.mjs';
 import { renderChunk } from './render.mjs';
+import { pcmHash, GOLDEN } from './update-golden.mjs';
 
 const QUIET = { version: 1, seed: 'window-seat-v1', events: [] };
 const WEATHERED = {
@@ -62,4 +65,39 @@ test('a rendered chunk is never silent', () => {
 test('a chunk covers exactly its cycle span in samples', () => {
   const start = 216813 * BARS;
   assert.equal(renderChunk(start, 8, QUIET).length, sampleAt(start + 8) - sampleAt(start));
+});
+
+test('golden audio: a fixed anchor renders to the pinned hash and levels', () => {
+  const expected = JSON.parse(readFileSync(new URL('./fixtures/golden-quiet.json', import.meta.url), 'utf8'));
+  const actual = pcmHash(renderChunk(GOLDEN.startCycle, GOLDEN.cycles, GOLDEN.journal));
+  assert.equal(actual.hash, expected.hash,
+    'Rendered audio changed. If deliberate, run `npm run golden` and review the diff.');
+  assert.ok(Math.abs(actual.peak - expected.peak) < 1e-9, `peak ${actual.peak} vs ${expected.peak}`);
+  assert.ok(Math.abs(actual.rms - expected.rms) < 1e-9, `rms ${actual.rms} vs ${expected.rms}`);
+});
+
+test('runtime/ imports only node builtins and composer.mjs', () => {
+  const files = ['mini.mjs', 'voices.mjs', 'schedule.mjs', 'render.mjs'];
+  for (const file of files) {
+    const src = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8');
+    for (const m of src.matchAll(/^\s*import\s[^;]*?from\s+'([^']+)'/gm)) {
+      const spec = m[1];
+      const ok = spec.startsWith('node:') || spec.startsWith('./') || spec === '../composer.mjs';
+      assert.ok(ok, `${file} imports '${spec}' — runtime/ must not depend on packages`);
+    }
+  }
+});
+
+test('the CLI writes PCM with no stray bytes before it', () => {
+  const out = `${process.env.TMPDIR ?? '/tmp'}/em-cli-${process.pid}.raw`;
+  execFileSync(process.execPath, [
+    new URL('./render.mjs', import.meta.url).pathname,
+    '--anchor', '2026-09-11T14:00:00Z', '--out', out, '--seconds', '6',
+  ], { stdio: 'pipe' });
+  const buf = readFileSync(out);
+  assert.equal(buf.length % 4, 0, 'expected whole 16-bit stereo frames');
+  assert.ok(buf.length > 6 * 48000 * 4 * 0.9, `expected ~6s of audio, got ${buf.length} bytes`);
+  let peak = 0;
+  for (let i = 0; i < buf.length; i += 2) peak = Math.max(peak, Math.abs(buf.readInt16LE(i)) / 32768);
+  assert.ok(peak > 0.01, `expected audible output, peak ${peak}`);
 });
