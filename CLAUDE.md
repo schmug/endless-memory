@@ -6,9 +6,13 @@ occasional attention.
 
 ## Invariants
 
-**The sound is listener-approved. Do not change it.** `composer.mjs` is
-byte-identical to the original prototype and carries the whole musical model.
-Edits that move the output fail `export.test.mjs`.
+**The sound is listener-approved. Do not change it.** `composer.mjs` carries
+the whole musical model and is no longer byte-identical to the original
+prototype — `patternSource()` now assembles its output from the exported
+`VOICES` table instead of a template literal, so the audio runtime can import
+one source of truth instead of duplicating it. What must stay fixed is the
+*generated* Strudel source, not the source of `composer.mjs` itself: edits
+that move that output fail `export.test.mjs`.
 
 **`npm run fixtures` blesses a sound change.** It is the documented escape
 hatch from a failing golden test, which makes it the easiest way to destroy the
