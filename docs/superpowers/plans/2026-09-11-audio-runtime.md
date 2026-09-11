@@ -582,7 +582,13 @@ function fromHap(hap, startBar) {
   const whole = hap.whole ?? hap.part;
   return {
     wave: v.s,
-    freq: round(v.freq !== undefined ? Number(v.freq) : 440 * Math.pow(2, (Number(v.note) - 69) / 12)),
+    // White-noise voices (snares, hats) carry neither freq nor note; the runtime
+    // falls back to 440 for them, so the oracle must too or every one mismatches.
+    freq: round(
+      v.freq !== undefined ? Number(v.freq)
+        : v.note !== undefined ? 440 * Math.pow(2, (Number(v.note) - 69) / 12)
+        : 440,
+    ),
     attack: round(v.attack), decay: round(v.decay), sustain: round(v.sustain), release: round(v.release),
     cutoff: v.cutoff === undefined ? null : round(v.cutoff),
     hcutoff: v.hcutoff === undefined ? null : round(v.hcutoff),
@@ -950,7 +956,6 @@ Append to `runtime/render.test.mjs`:
 
 ```javascript
 import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { pcmHash, GOLDEN } from './update-golden.mjs';
 
