@@ -39,12 +39,21 @@ test('rendering is deterministic, including the noise voices', () => {
   assert.deepEqual(Array.from(renderEvents(evts, opts)), Array.from(renderEvents(evts, opts)));
 });
 
-test('noise is seeded from absolute position, so the same event renders identically at any origin', () => {
-  const evt = note({ wave: 'white', freq: 3000, begin: 4, end: 4.25 });
-  const whole = renderEvents([evt], { originSample: sampleAt(4), lengthSamples: sampleAt(5) - sampleAt(4) });
-  const shifted = renderEvents([evt], { originSample: sampleAt(4), lengthSamples: sampleAt(6) - sampleAt(4) });
-  for (let i = 0; i < whole.length; i++) {
-    assert.equal(whole[i], shifted[i], `sample ${i} differs with a different buffer length`);
+test('rendering is identical regardless of origin offset, preserving absolute time seeding', () => {
+  // Events spanning cycles 3..6 with white-noise and pitched event with release tail
+  const events = [
+    note({ wave: 'white', freq: 3000, begin: 3, end: 4 }),
+    note({ wave: 'sine', freq: 440, begin: 3.5, end: 5, release: 0.5 }),
+  ];
+
+  const renderA = renderEvents(events, { originSample: sampleAt(3), lengthSamples: sampleAt(6) - sampleAt(3) });
+  const renderB = renderEvents(events, { originSample: sampleAt(4), lengthSamples: sampleAt(6) - sampleAt(4) });
+
+  // Overlapping region: cycles 4..6 in renderA maps to samples [sampleAt(4) - sampleAt(3), renderA.length)
+  // Same region in renderB is [0, renderB.length)
+  const offset = sampleAt(4) - sampleAt(3);
+  for (let i = 0; i < renderB.length; i++) {
+    assert.equal(renderA[i + offset], renderB[i], `sample ${i} differs between origin=sampleAt(3) and origin=sampleAt(4)`);
   }
 });
 
