@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "pretest": "node station.mjs export 2026-09-11T14:00:00Z",
-    "test": "node --test composer.test.mjs",
+    "test": "node --test composer.test.mjs export.test.mjs",
+    "fixtures": "node test/update-fixtures.mjs",
     "export": "node station.mjs export"
   },
   "keywords": [],
