@@ -277,7 +277,7 @@ export function parseCycle(pattern, cycle) {
 cd /Users/cory/endless-memory && npm test 2>&1 | grep -E "^(not ok|ok)|# (tests|pass|fail)"
 ```
 
-Expected: 10 passing, 0 failing — the 8 existing tests plus the 2 new ones. Report counts.
+Expected: 11 passing, 0 failing — the 8 existing tests plus 3 new ones. Report counts.
 
 If a comparison fails, read the assertion message: it prints the field, the cycle and the
 first 120 characters of the pattern. Do not weaken the test to make it pass; the oracle is
@@ -507,7 +507,7 @@ against.
 cd /Users/cory/endless-memory && npm test 2>&1 | grep -E "^(not ok|ok)|# (tests|pass|fail)"
 ```
 
-Expected: 16 passing, 0 failing. Report counts.
+Expected: 17 passing, 0 failing. Report counts.
 
 - [ ] **Step 6: Commit**
 
@@ -732,7 +732,7 @@ export function eventsForCycles(startCycle, cycleCount, journal) {
 cd /Users/cory/endless-memory && npm test 2>&1 | grep -E "^(not ok|ok)|# (tests|pass|fail)"
 ```
 
-Expected: 19 passing, 0 failing. Report counts.
+Expected: 20 passing, 0 failing. Report counts.
 
 If the comparison fails on `gain`, check that `drift.gain` multiplies every voice. If it
 fails on `cutoff` or `release` for the chords voice only, check the `isChords` branch —
@@ -894,7 +894,7 @@ export function renderChunk(startCycle, cycleCount, journal) {
 cd /Users/cory/endless-memory && npm test 2>&1 | grep -E "^(not ok|ok)|# (tests|pass|fail)"
 ```
 
-Expected: 23 passing, 0 failing. Report counts.
+Expected: 25 passing, 0 failing. Report counts.
 
 If a bit-identity assertion fails, the message names the exact sample. Check in this
 order, because each was a real cause: positions or noise seeds computed from a
@@ -915,7 +915,7 @@ Expected: the chunk-invariance tests **fail**. Restore `PRE_ROLL_CYCLES = 2` and
 cd /Users/cory/endless-memory && npm test 2>&1 | grep -E "# (tests|pass|fail)"
 ```
 
-Expected: 23 passing, 0 failing. Do not continue until you have watched it fail and pass.
+Expected: 25 passing, 0 failing. Do not continue until you have watched it fail and pass.
 
 - [ ] **Step 7: Commit**
 
@@ -1131,7 +1131,7 @@ Expected output names the sample count, peak and rms.
 cd /Users/cory/endless-memory && npm test 2>&1 | grep -E "^(not ok|ok)|# (tests|pass|fail)"
 ```
 
-Expected: 26 passing, 0 failing. Report counts.
+Expected: 28 passing, 0 failing. Report counts.
 
 - [ ] **Step 7: Prove the golden test catches a sound change**
 
@@ -1149,7 +1149,7 @@ git checkout runtime/schedule.mjs
 npm test 2>&1 | grep -E "# (tests|pass|fail)"
 ```
 
-Expected: 26 passing, 0 failing.
+Expected: 28 passing, 0 failing.
 
 - [ ] **Step 8: Confirm nothing in the engine moved**
 
@@ -1186,8 +1186,8 @@ Chunk invariance is the headline: rendering a span in chunks is bit-identical to
 
 Test output:
 \`\`\`
-# tests 26
-# pass 26
+# tests 28
+# pass 28
 # fail 0
 \`\`\`
 "
@@ -1237,4 +1237,4 @@ Task 4 and consumed in Task 5 and in `update-golden.mjs`. Event field names — 
 helpers. `midiToHz` is exported from `voices.mjs` in Task 2 and imported by `schedule.mjs`
 in Task 3.
 
-Running test counts: 8 before, then 10, 16, 19, 23, 26.
+Running test counts: 8 before, then 11, 17, 20, 25, 28. (Task 1's third test was added during review; each later count follows from the test() calls its brief contains.)
