@@ -67,7 +67,7 @@ Root stays the frozen engine. Piece C lands in a new `runtime/` directory.
 |---|---|---|
 | `runtime/mini.mjs` | Parse one mini-notation string into `[{value, begin, end}]` in cycle-relative time `[0,1)` | nothing |
 | `runtime/voices.mjs` | Render one parameterised event into samples: triangle/sine/white sources, ADSR, one-pole low-pass and high-pass | nothing |
-| `runtime/schedule.mjs` | Turn `scene(index, journal)` into timed, parameterised events for a cycle range; apply `atmosphere()` drift | `composer.mjs`, `mini.mjs` |
+| `runtime/schedule.mjs` | Turn `scene(index, journal)` into timed, parameterised events for a cycle range using the exported `VOICES` table; apply `atmosphere()` drift | `composer.mjs` (`scene`, `VOICES`, `atmosphere`), `mini.mjs` |
 | `runtime/render.mjs` | Chunk loop and CLI: render N cycles, hand the buffer to a sink, advance | `voices.mjs`, `schedule.mjs` |
 
 Each module is independently testable. `mini.mjs` and `voices.mjs` are pure functions
@@ -89,21 +89,30 @@ so `voices.mjs` is a promotion of proven code rather than a rewrite:
   begin, end: number }  // absolute cycles
 ```
 
-### The voice-table problem
+### Voice parameters come from `composer.mjs`
 
-`patternSource()` in `composer.mjs` holds each voice's parameters — `s`, `attack`,
-`decay`, `sustain`, `release`, `lpf`, `gain` — only inside a JavaScript template
-string. The runtime needs them structurally, and `composer.mjs` must not be edited.
+`composer.mjs` exports **`VOICES`**, a structured table describing all six voices —
+waveform, envelope, filters, gain, the kick's fixed frequency, and which filter value is
+dynamic. `patternSource()` assembles its generated string from that same table.
 
-`schedule.mjs` therefore carries an explicit voice table, and a test parses
-`patternSource()`'s output and asserts the table matches it. Drift becomes a test
-failure rather than a silent change to the sound. Parsing happens in the test, never at
-runtime.
+`schedule.mjs` imports `VOICES` directly. There is one source of truth, and nothing to
+keep in sync.
 
-The same treatment applies to a wart recorded in issue #2: the exported score applies
-atmosphere drift by matching `value.gain === .14` to identify the chord voice. The
-runtime targets the chord voice by name, and the differential test proves the output is
-identical.
+This was not the original design. The spec previously had the runtime carry a duplicate
+table kept honest by a test that parsed `patternSource()`'s output — two sources of truth
+held together by a test, and the weakest part of the design. Issue #8 removed the problem
+instead of managing it, refactoring `patternSource()` to build from an exported table
+while keeping the generated source byte-identical. The golden fixtures were the proof:
+they pin the export at two anchors, and they did not move.
+
+That also resolves a wart recorded in issue #2. The exported score applies atmosphere
+drift by matching `value.gain === .14` to identify the chord voice; the runtime instead
+selects the voice whose `field` is `chords`, which is now a first-class property rather
+than a magic number.
+
+A consequence worth stating plainly: `composer.mjs` is no longer byte-identical to the
+original prototype. The invariant that survives — and the only one that ever mattered —
+is that its *generated output* does not move, enforced by `export.test.mjs`.
 
 ## Chunk invariance (a required invariant)
 
@@ -149,7 +158,7 @@ With all five applied, chunked and one-pass output were verified **bit-identical
 
 ## Verification
 
-Three layers, because the spike produced three separate cases where structurally valid
+Two layers, because the spike produced three separate cases where structurally valid
 output was completely wrong — noise that encoded to correct-looking HLS, silent renders
 reported as successful, and a memory watchdog measuring the wrong process.
 
@@ -164,32 +173,13 @@ level/spectral bounds. The hash catches any change at all; the bounds make a fai
 readable by saying how the sound moved. Regenerating the fixture must be a deliberate,
 reviewable diff, exactly as `npm run fixtures` is for the score.
 
-A caution that shaped the above: a golden fixture generated solely from the new
+A caution worth keeping: a golden fixture generated solely from the new
 implementation faithfully preserves that implementation's own mistakes. The chunk
 discontinuity is exactly such a mistake, and a self-generated golden would have locked
 it in as correct. The chunk-invariance test above is the specific guard; more generally,
 when the synthesiser is revised, compare against a superdough render of the same anchor
 rather than against the runtime's own previous output. Note also that the approved
 reference audio was rendered in one pass.
-
-**3. Voice table.** The runtime's table must equal what `patternSource()` emits. Shape
-of the test, sharpened by an external design review (gpt-6-astra, 2026-09-11):
-
-- Parse with a **real JavaScript parser and a deliberately narrow AST interpreter**, not
-  a regex. Accept exactly one `stack(...)` containing the expected six voice chains;
-  reject unknown methods, extra statements, and missing or duplicate parameters.
-- Pass **distinct sentinel strings** for `chords`, `bass`, `melody`, `kicks`, `snares`
-  and `hats`, and identify each voice by **which input it is bound to** — never by
-  waveform, gain, or position in the stack, all of which can collide.
-- Extract every parameter, including the kick's `freq` and both filters, and preserve
-  method order. Normalise only differences explicitly judged irrelevant, such as
-  whitespace, quote style, and equivalent numeric spellings.
-- **Exercise several distinct `cutoff` values.** The chord voice's cutoff is the one
-  parameter that varies per scene; testing a single scene where it happens to be 1800
-  would let a hardcoded constant pass.
-- **Check the checker.** Changing a gain, adding a method, removing a filter, or
-  swapping two voices' inputs must each make the test fail; reformatting must not.
-
 
 ## Interfaces
 
@@ -242,8 +232,8 @@ a banner on import silently corrupts the stream in a way every structural check 
    verified by making the edit and watching it fail, then reverting.
 3b. Rendering any span in chunks is bit-identical to rendering it in one pass, asserted
    across chunk sizes and across scene boundaries, motif handoffs and weather changes.
-3c. Each of these mutations makes the voice-table test fail: changing a gain, adding a
-   method, removing a filter, swapping two voices' inputs. Reformatting does not.
+3c. `runtime/` reads voice parameters from `composer.mjs`'s exported `VOICES` and does
+   not restate any of them. A mutation to `VOICES` changes the rendered audio.
 4. A continuous render of at least 24 simulated hours completes with zero silent chunks
    and no memory growth beyond warm-up.
 5. `runtime/` imports nothing outside Node built-ins and `composer.mjs`, asserted by a
