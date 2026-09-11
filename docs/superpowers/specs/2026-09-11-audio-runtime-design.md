@@ -105,6 +105,48 @@ atmosphere drift by matching `value.gain === .14` to identify the chord voice. T
 runtime targets the chord voice by name, and the differential test proves the output is
 identical.
 
+## Chunk invariance (a required invariant)
+
+**Rendering a span in chunks must be bit-identical to rendering the same span in one
+pass.** This is not an aspiration; it is the property that makes chunked streaming
+legitimate, and the spike's synthesiser violated it.
+
+Measured 2026-09-11 against the spike code: chunked output differed from one-pass by a
+maximum sample difference of **0.119958** — about 17% of the 0.70 peak — with error
+energy at **-23.5 dB** relative to signal, at **every** chunk boundary. The 7-day
+endurance run therefore contained a discontinuity every 25 seconds that no measurement
+caught, because peak, RMS and silence were all measured and continuity was not. The
+audio Cory approved was rendered in a single pass and never contained it.
+
+Three compounding causes, all of which the runtime must avoid. Each was found by
+measurement after the previous hypothesis proved insufficient:
+
+1. **Truncated release tails.** Rendering stopped at the buffer end (`if (idx >=
+   lengthSamples) break`), and events beginning in an earlier chunk were never queried,
+   so their tails were absent from the next chunk. Pre-roll alone moved the error only
+   from -23.5 dB to -26.5 dB.
+2. **Chunk-relative noise seeding.** The white-noise voices seeded their generator from
+   a chunk-relative sample index, so snares and hats produced *different noise*
+   depending on which chunk they fell in. Fixing this as well reached -29.2 dB, still
+   not identical.
+3. **Independently rounded positions.** Event starts rounded a chunk-relative value
+   while chunk length used `ceil`, letting every event sit up to a sample away from
+   where one-pass rendering put it.
+
+The runtime must therefore:
+
+- Derive every sample position from absolute musical time:
+  `sampleAt(absCycle) = Math.round(absCycle * cycleSeconds * sampleRate)`.
+- Define chunk `k` as samples `[sampleAt(k*C), sampleAt((k+1)*C))`, so boundaries are
+  exact and chunk lengths are not independently rounded.
+- Render each event at `sampleAt(absBegin) - chunkOriginSample`.
+- Seed noise from absolute sample position, never chunk-relative.
+- Query events with a **2-cycle pre-roll** before the chunk start so tails from earlier
+  events exist, then discard the pre-roll region.
+
+With all five applied, chunked and one-pass output were verified **bit-identical**
+(maximum difference 0.000e+0).
+
 ## Verification
 
 Three layers, because the spike produced three separate cases where structurally valid
@@ -122,7 +164,32 @@ level/spectral bounds. The hash catches any change at all; the bounds make a fai
 readable by saying how the sound moved. Regenerating the fixture must be a deliberate,
 reviewable diff, exactly as `npm run fixtures` is for the score.
 
-**3. Voice table.** As described above.
+A caution that shaped the above: a golden fixture generated solely from the new
+implementation faithfully preserves that implementation's own mistakes. The chunk
+discontinuity is exactly such a mistake, and a self-generated golden would have locked
+it in as correct. The chunk-invariance test above is the specific guard; more generally,
+when the synthesiser is revised, compare against a superdough render of the same anchor
+rather than against the runtime's own previous output. Note also that the approved
+reference audio was rendered in one pass.
+
+**3. Voice table.** The runtime's table must equal what `patternSource()` emits. Shape
+of the test, sharpened by an external design review (gpt-6-astra, 2026-09-11):
+
+- Parse with a **real JavaScript parser and a deliberately narrow AST interpreter**, not
+  a regex. Accept exactly one `stack(...)` containing the expected six voice chains;
+  reject unknown methods, extra statements, and missing or duplicate parameters.
+- Pass **distinct sentinel strings** for `chords`, `bass`, `melody`, `kicks`, `snares`
+  and `hats`, and identify each voice by **which input it is bound to** — never by
+  waveform, gain, or position in the stack, all of which can collide.
+- Extract every parameter, including the kick's `freq` and both filters, and preserve
+  method order. Normalise only differences explicitly judged irrelevant, such as
+  whitespace, quote style, and equivalent numeric spellings.
+- **Exercise several distinct `cutoff` values.** The chord voice's cutoff is the one
+  parameter that varies per scene; testing a single scene where it happens to be 1800
+  would let a hardcoded constant pass.
+- **Check the checker.** Changing a gain, adding a method, removing a filter, or
+  swapping two voices' inputs must each make the test fail; reformatting must not.
+
 
 ## Interfaces
 
@@ -173,6 +240,10 @@ a banner on import silently corrupts the stream in a way every structural check 
    scenes spanning quiet, weathered, recall and handoff cases, with zero mismatches.
 3. A deliberate one-value edit to a voice parameter makes the golden audio test fail,
    verified by making the edit and watching it fail, then reverting.
+3b. Rendering any span in chunks is bit-identical to rendering it in one pass, asserted
+   across chunk sizes and across scene boundaries, motif handoffs and weather changes.
+3c. Each of these mutations makes the voice-table test fail: changing a gain, adding a
+   method, removing a filter, swapping two voices' inputs. Reformatting does not.
 4. A continuous render of at least 24 simulated hours completes with zero silent chunks
    and no memory growth beyond warm-up.
 5. `runtime/` imports nothing outside Node built-ins and `composer.mjs`, asserted by a
