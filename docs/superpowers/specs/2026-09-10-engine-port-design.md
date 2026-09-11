@@ -101,7 +101,7 @@ Verbatim from `$PROTOTYPE/`:
 `baselines/listener-approved-v1.strudel`, `baselines/listener-approved-v2.strudel`,
 `package.json`, `package-lock.json`, `README.md`, `.gitignore`.
 
-Also copied: `research/` — 20 files, ~1.1 MB of raw NWS and NOAA CO-OPS pulls for
+Also copied: `research/` — 19 files, ~1.1 MB of raw NWS and NOAA CO-OPS pulls for
 Boston, Winthrop and Marblehead.
 
 `research/` is committed because `KBOS-observations.json` and `KBVY-observations.json`
