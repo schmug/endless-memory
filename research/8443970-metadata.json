@@ -1,0 +1,212 @@
+{
+  "count": 1,
+  "units": null,
+  "stations": [
+    {
+      "tidal": true,
+      "greatlakes": false,
+      "shefcode": "BHBM3",
+      "details": {
+        "id": "8443970",
+        "established": "1921-05-03 00:00:00",
+        "removed": "",
+        "noaachart": "13272",
+        "timemeridian": -75,
+        "timezone": -5.0,
+        "origyear": "1988-11-16 00:00:00",
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8443970/details.json"
+      },
+      "sensors": {
+        "units": "feet",
+        "sensors": [
+          {
+            "status": 1,
+            "refdatum": "Site Elevation",
+            "sensorID": "D1",
+            "name": "Air Temperature",
+            "elevation": 8.038058,
+            "message": "",
+            "dcp": 1
+          },
+          {
+            "status": 1,
+            "refdatum": "MSL",
+            "sensorID": "F1",
+            "name": "Barometric Pressure",
+            "elevation": 30.470345,
+            "message": "",
+            "dcp": 1
+          },
+          {
+            "status": 1,
+            "refdatum": "MSL",
+            "sensorID": "site",
+            "name": "site",
+            "elevation": 26.421791,
+            "message": "",
+            "dcp": 0
+          },
+          {
+            "status": 1,
+            "refdatum": "",
+            "sensorID": "U1",
+            "name": "Tsunami WL",
+            "elevation": null,
+            "message": "",
+            "dcp": 1
+          },
+          {
+            "status": 1,
+            "refdatum": "",
+            "sensorID": "Y1",
+            "name": "Microwave WL",
+            "elevation": null,
+            "message": "",
+            "dcp": 1
+          }
+        ],
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8443970/sensors.json"
+      },
+      "floodlevels": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8443970/floodlevels.json"
+      },
+      "datums": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8443970/datums.json"
+      },
+      "supersededdatums": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8443970/supersededdatums.json"
+      },
+      "harmonicConstituents": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8443970/harcon.json"
+      },
+      "benchmarks": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8443970/benchmarks.json"
+      },
+      "tidePredOffsets": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8443970/tidepredoffsets.json"
+      },
+      "ofsMapOffsets": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8443970/ofsmapoffsets.json"
+      },
+      "state": "MA",
+      "timezone": "EST",
+      "timezonecorr": -5,
+      "observedst": true,
+      "stormsurge": false,
+      "nearby": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8443970/nearby.json"
+      },
+      "forecast": true,
+      "outlook": true,
+      "HTFhistorical": true,
+      "HTFmonthly": true,
+      "nonNavigational": false,
+      "inundationdb": true,
+      "id": "8443970",
+      "name": "Boston",
+      "lat": 42.35389,
+      "lng": -71.05028,
+      "affiliations": "NWLON",
+      "portscode": "bh",
+      "products": {
+        "products": [
+          {
+            "name": "Water Levels",
+            "value": "https://tidesandcurrents.noaa.gov/waterlevels.html?id=8443970"
+          },
+          {
+            "name": "Reports",
+            "value": "https://tidesandcurrents.noaa.gov/reports.html?id=8443970"
+          },
+          {
+            "name": "Tide Predictions",
+            "value": "https://tidesandcurrents.noaa.gov/noaatidepredictions.html?id=8443970"
+          },
+          {
+            "name": "Meteorological",
+            "value": "https://tidesandcurrents.noaa.gov/met.html?id=8443970"
+          },
+          {
+            "name": "PORTS",
+            "value": "https://tidesandcurrents.noaa.gov/ports/ports.html?id=8443970"
+          },
+          {
+            "name": "OFS",
+            "value": "https://tidesandcurrents.noaa.gov/ofs/ofs_station.html?stname=Boston&ofs=gom&stnid=8443970&subdomain=0"
+          },
+          {
+            "name": "Benchmarks",
+            "value": "https://tidesandcurrents.noaa.gov/benchmarks.html?id=8443970"
+          },
+          {
+            "name": "Superseded  Benchmarks",
+            "value": "https://tidesandcurrents.noaa.gov/benchmarks.html?id=8443970&type=superseded"
+          },
+          {
+            "name": "Datums",
+            "value": "https://tidesandcurrents.noaa.gov/datums.html?id=8443970"
+          },
+          {
+            "name": "Superseded Datums",
+            "value": "https://tidesandcurrents.noaa.gov/datums.html?id=8443970&epoch=1"
+          },
+          {
+            "name": "Harmonic",
+            "value": "https://tidesandcurrents.noaa.gov/harcon.html?id=8443970"
+          },
+          {
+            "name": "Inundation Analysis",
+            "value": "https://tidesandcurrents.noaa.gov/inundationanalysis/analysisParams.html?station=8443970"
+          },
+          {
+            "name": "Sea Level Trends",
+            "value": "https://tidesandcurrents.noaa.gov/sltrends/sltrends_station.shtml?id=8443970"
+          },
+          {
+            "name": "Extreme Water Levels",
+            "value": "https://tidesandcurrents.noaa.gov/est/est_station.shtml?stnid=8443970"
+          },
+          {
+            "name": "Coastal Inundation Dashboard",
+            "value": "https://tidesandcurrents.noaa.gov/inundationdb/inundation.html?id=8443970"
+          },
+          {
+            "name": "Annual High Tide Flood Outlook",
+            "value": "https://tidesandcurrents.noaa.gov/high-tide-flooding/annual-outlook.html?station=8443970"
+          },
+          {
+            "name": "Monthly High Tide Flood Outlook",
+            "value": "https://tidesandcurrents.noaa.gov/high-tide-flooding/monthly-outlook.html?station=8443970"
+          },
+          {
+            "name": "PORT Code",
+            "value": "bh"
+          },
+          {
+            "name": "PORT Name",
+            "value": "Boston Harbor PORTS"
+          },
+          {
+            "name": "OFS Code",
+            "value": "gom"
+          },
+          {
+            "name": "OFS Name",
+            "value": "Gulf of Maine"
+          }
+        ],
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8443970/products.json"
+      },
+      "disclaimers": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8443970/disclaimers.json"
+      },
+      "notices": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8443970/notices.json"
+      },
+      "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8443970.json",
+      "expand": "details,sensors,floodlevels,datums,harcon,tidepredoffsets,ofsmapoffsets,products,disclaimers,notices",
+      "tideType": "Mixed"
+    }
+  ],
+  "self": null
+}

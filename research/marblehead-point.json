@@ -1,0 +1,112 @@
+{
+  "@context": [
+    "https://geojson.org/geojson-ld/geojson-context.jsonld",
+    {
+      "@version": "1.1",
+      "wx": "https://api.weather.gov/ontology#",
+      "s": "https://schema.org/",
+      "geo": "http://www.opengis.net/ont/geosparql#",
+      "unit": "http://codes.wmo.int/common/unit/",
+      "@vocab": "https://api.weather.gov/ontology#",
+      "geometry": {
+        "@id": "s:GeoCoordinates",
+        "@type": "geo:wktLiteral"
+      },
+      "city": "s:addressLocality",
+      "state": "s:addressRegion",
+      "distance": {
+        "@id": "s:Distance",
+        "@type": "s:QuantitativeValue"
+      },
+      "bearing": {
+        "@type": "s:QuantitativeValue"
+      },
+      "value": {
+        "@id": "s:value"
+      },
+      "unitCode": {
+        "@id": "s:unitCode",
+        "@type": "@id"
+      },
+      "forecastOffice": {
+        "@type": "@id"
+      },
+      "forecastGridData": {
+        "@type": "@id"
+      },
+      "publicZone": {
+        "@type": "@id"
+      },
+      "county": {
+        "@type": "@id"
+      }
+    }
+  ],
+  "id": "https://api.weather.gov/points/42.5001,-70.8578",
+  "type": "Feature",
+  "geometry": {
+    "type": "Point",
+    "coordinates": [
+      -70.8578,
+      42.5001
+    ]
+  },
+  "properties": {
+    "@id": "https://api.weather.gov/points/42.5001,-70.8578",
+    "@type": "wx:Point",
+    "cwa": "BOX",
+    "type": "land",
+    "forecastOffice": "https://api.weather.gov/offices/BOX",
+    "gridId": "BOX",
+    "gridX": 77,
+    "gridY": 109,
+    "forecast": "https://api.weather.gov/gridpoints/BOX/77,109/forecast",
+    "forecastHourly": "https://api.weather.gov/gridpoints/BOX/77,109/forecast/hourly",
+    "forecastGridData": "https://api.weather.gov/gridpoints/BOX/77,109",
+    "observationStations": "https://api.weather.gov/gridpoints/BOX/77,109/stations",
+    "relativeLocation": {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -70.8358197,
+          42.4956288
+        ]
+      },
+      "properties": {
+        "city": "Marblehead",
+        "state": "MA",
+        "distance": {
+          "unitCode": "wmoUnit:m",
+          "value": 0
+        },
+        "bearing": {
+          "unitCode": "wmoUnit:degree_(angle)",
+          "value": 0
+        }
+      }
+    },
+    "forecastZone": "https://api.weather.gov/zones/forecast/MAZ007",
+    "county": "https://api.weather.gov/zones/county/MAC009",
+    "fireWeatherZone": "https://api.weather.gov/zones/fire/MAZ007",
+    "timeZone": "America/New_York",
+    "radarStation": "KBOX",
+    "astronomicalData": {
+      "sunrise": "2026-09-10T06:18:15-04:00",
+      "sunset": "2026-09-10T19:02:25-04:00",
+      "transit": "2026-09-10T12:40:20-04:00",
+      "civilTwilightBegin": "2026-09-10T05:49:54-04:00",
+      "civilTwilightEnd": "2026-09-10T19:30:46-04:00",
+      "nauticalTwilightBegin": "2026-09-10T05:16:10-04:00",
+      "nauticalTwilightEnd": "2026-09-10T20:04:29-04:00",
+      "astronomicalTwilightBegin": "2026-09-10T04:41:13-04:00",
+      "astronomicalTwilightEnd": "2026-09-10T20:39:26-04:00"
+    },
+    "nwr": {
+      "transmitter": "WNG574",
+      "sameCode": "025009",
+      "areaBroadcast": "https://api.weather.gov/radio/WNG574/broadcast",
+      "pointBroadcast": "https://api.weather.gov/points/42.5001,-70.8578/radio"
+    }
+  }
+}

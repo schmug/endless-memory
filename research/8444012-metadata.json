@@ -1,0 +1,29 @@
+{
+  "count": 1,
+  "units": null,
+  "stations": [
+    {
+      "state": "MA",
+      "tidepredoffsets": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8444012/tidepredoffsets.json"
+      },
+      "type": "S",
+      "timemeridian": -75,
+      "reference_id": "8443970",
+      "timezonecorr": -5,
+      "id": "8444012",
+      "name": "Deer Island (south end)",
+      "lat": 42.3483,
+      "lng": -70.96,
+      "affiliations": "",
+      "portscode": "",
+      "products": null,
+      "disclaimers": null,
+      "notices": null,
+      "self": null,
+      "expand": null,
+      "tideType": ""
+    }
+  ],
+  "self": null
+}

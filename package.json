@@ -1,0 +1,25 @@
+{
+  "name": "endless-memory",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "pretest": "node station.mjs export 2026-09-11T14:00:00Z",
+    "test": "node --test composer.test.mjs",
+    "export": "node station.mjs export"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@kabelsalat/web": "0.4.1",
+    "@strudel/core": "1.2.5",
+    "@strudel/mini": "^1.2.6"
+  },
+  "overrides": {
+    "@strudel/core": "$@strudel/core"
+  },
+  "devDependencies": {
+    "@strudel/transpiler": "^1.2.6"
+  }
+}

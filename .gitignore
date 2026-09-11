@@ -1,0 +1,8 @@
+node_modules/
+
+# Derived from `node station.mjs export`. Each embeds the anchor timestamp it
+# was generated with, so committing them means churn on every run. The README's
+# "Try it" section regenerates them.
+endless-memory.strudel
+score-45min.json
+listen.url

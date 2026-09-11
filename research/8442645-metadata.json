@@ -1,0 +1,106 @@
+{
+  "count": 1,
+  "units": null,
+  "stations": [
+    {
+      "tidal": true,
+      "greatlakes": false,
+      "shefcode": "",
+      "details": {
+        "id": "8442645",
+        "established": "1992-06-03 00:00:00",
+        "removed": "1992-10-07 23:59:00",
+        "noaachart": "13276",
+        "timemeridian": -75,
+        "timezone": -5.0,
+        "origyear": "1992-06-03 00:00:00",
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8442645/details.json"
+      },
+      "sensors": {
+        "units": "feet",
+        "sensors": null,
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8442645/sensors.json"
+      },
+      "floodlevels": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8442645/floodlevels.json"
+      },
+      "datums": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8442645/datums.json"
+      },
+      "supersededdatums": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8442645/supersededdatums.json"
+      },
+      "harmonicConstituents": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8442645/harcon.json"
+      },
+      "benchmarks": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8442645/benchmarks.json"
+      },
+      "tidePredOffsets": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8442645/tidepredoffsets.json"
+      },
+      "ofsMapOffsets": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8442645/ofsmapoffsets.json"
+      },
+      "state": "MA",
+      "timezone": "EST",
+      "timezonecorr": -5,
+      "observedst": true,
+      "stormsurge": false,
+      "nearby": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8442645/nearby.json"
+      },
+      "forecast": false,
+      "outlook": false,
+      "HTFhistorical": false,
+      "HTFmonthly": false,
+      "nonNavigational": false,
+      "inundationdb": false,
+      "id": "8442645",
+      "name": "SALEM, SALEM HARBOR",
+      "lat": 42.5233,
+      "lng": -70.8767,
+      "affiliations": "",
+      "portscode": null,
+      "products": {
+        "products": [
+          {
+            "name": "Tide Predictions",
+            "value": "https://tidesandcurrents.noaa.gov/noaatidepredictions.html?id=8442645"
+          },
+          {
+            "name": "Benchmarks",
+            "value": "https://tidesandcurrents.noaa.gov/benchmarks.html?id=8442645"
+          },
+          {
+            "name": "Superseded  Benchmarks",
+            "value": "https://tidesandcurrents.noaa.gov/benchmarks.html?id=8442645&type=superseded"
+          },
+          {
+            "name": "Datums",
+            "value": "https://tidesandcurrents.noaa.gov/datums.html?id=8442645"
+          },
+          {
+            "name": "Harmonic",
+            "value": "https://tidesandcurrents.noaa.gov/harcon.html?id=8442645"
+          },
+          {
+            "name": "Inundation Analysis",
+            "value": "https://tidesandcurrents.noaa.gov/inundationanalysis/analysisParams.html?station=8442645"
+          }
+        ],
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8442645/products.json"
+      },
+      "disclaimers": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8442645/disclaimers.json"
+      },
+      "notices": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8442645/notices.json"
+      },
+      "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/8442645.json",
+      "expand": "details,sensors,floodlevels,datums,harcon,tidepredoffsets,ofsmapoffsets,products,disclaimers,notices",
+      "tideType": "Mixed"
+    }
+  ],
+  "self": null
+}
