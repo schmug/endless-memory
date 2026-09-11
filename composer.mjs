@@ -94,13 +94,47 @@ export function scene(index, journal) {
     cutoff: 1800,
     chords:wrap(chords), bass:wrap(bass), melody:wrap(melody), hats:wrap(hats), kicks:wrap(kicks), snares:wrap(snares)};
 }
+// One source of truth for every voice's synthesis parameters. patternSource()
+// assembles the generated string from this table instead of a template literal
+// so the audio runtime can import the same data. A filter's `dynamic` field
+// names a property to read off the `s` argument at render time (the chords'
+// cutoff drifts with weather); a `value` field is a fixed constant instead.
+export const VOICES = [
+  { field: 'chords', kind: 'note', wave: 'triangle',
+    attack: .06, decay: .7, sustain: .25, release: .6,
+    filters: [{ type: 'lpf', dynamic: 'cutoff' }], gain: .14 },
+  { field: 'bass', kind: 'note', wave: 'sine',
+    attack: .012, decay: .25, sustain: .15, release: .15,
+    filters: [], gain: .26 },
+  { field: 'melody', kind: 'note', wave: 'triangle',
+    attack: .01, decay: .16, sustain: 0, release: .18,
+    filters: [{ type: 'lpf', value: 2300 }], gain: .09 },
+  { field: 'kicks', kind: 's', wave: 'sine', freq: 52,
+    attack: .002, decay: .13, sustain: 0, release: .04,
+    filters: [], gain: .32 },
+  { field: 'snares', kind: 's', wave: 'white',
+    attack: .001, decay: .08, sustain: 0, release: .025,
+    filters: [{ type: 'hpf', value: 1100 }, { type: 'lpf', value: 4200 }], gain: .07 },
+  { field: 'hats', kind: 's', wave: 'white',
+    attack: .001, decay: .018, sustain: 0, release: .008,
+    filters: [{ type: 'hpf', value: 6500 }], gain: .025 },
+];
+// The generated source strips leading zeros from decimals (.06, not 0.06).
+function fmt(n) {
+  const str = String(n);
+  return str.startsWith('0.') ? str.slice(1) : str;
+}
+function voiceSource(voice, s) {
+  const pattern = JSON.stringify(s[voice.field]);
+  let out = voice.kind === 'note'
+    ? `note(${pattern}).s('${voice.wave}')`
+    : `s('${voice.wave}').struct(${pattern})`;
+  if (voice.freq !== undefined) out += `.freq(${fmt(voice.freq)})`;
+  out += `.attack(${fmt(voice.attack)}).decay(${fmt(voice.decay)}).sustain(${fmt(voice.sustain)}).release(${fmt(voice.release)})`;
+  for (const filter of voice.filters) out += `.${filter.type}(${fmt(filter.dynamic ? s[filter.dynamic] : filter.value)})`;
+  out += `.gain(${fmt(voice.gain)})`;
+  return out;
+}
 export function patternSource(s) {
-  return `stack(
-  note(${JSON.stringify(s.chords)}).s('triangle').attack(.06).decay(.7).sustain(.25).release(.6).lpf(${s.cutoff}).gain(.14),
-  note(${JSON.stringify(s.bass)}).s('sine').attack(.012).decay(.25).sustain(.15).release(.15).gain(.26),
-  note(${JSON.stringify(s.melody)}).s('triangle').attack(.01).decay(.16).sustain(0).release(.18).lpf(2300).gain(.09),
-  s('sine').struct(${JSON.stringify(s.kicks)}).freq(52).attack(.002).decay(.13).sustain(0).release(.04).gain(.32),
-  s('white').struct(${JSON.stringify(s.snares)}).attack(.001).decay(.08).sustain(0).release(.025).hpf(1100).lpf(4200).gain(.07),
-  s('white').struct(${JSON.stringify(s.hats)}).attack(.001).decay(.018).sustain(0).release(.008).hpf(6500).gain(.025)
-)`;
+  return `stack(\n  ${VOICES.map(voice => voiceSource(voice, s)).join(',\n  ')}\n)`;
 }
