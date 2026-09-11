@@ -78,12 +78,24 @@ test('golden audio: a fixed anchor renders to the pinned hash and levels', () =>
 
 test('runtime/ imports only node builtins and composer.mjs', () => {
   const files = ['mini.mjs', 'voices.mjs', 'schedule.mjs', 'render.mjs'];
+  // Match specifiers, not whole statements — a regex anchored to one statement
+  // shape (e.g. single-quoted `import x from '...'`) is easy to evade with a
+  // different quote style, a bare side-effect import, dynamic import(), or
+  // require(). Cover all four forms independently.
+  const patterns = [
+    /\bfrom\s+['"]([^'"]+)['"]/g,               // static: import x from 'pkg' | "pkg"
+    /\bimport\s+['"]([^'"]+)['"]/g,             // bare side-effect: import 'pkg' | "pkg"
+    /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g,   // dynamic: import('pkg') | import("pkg")
+    /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g,  // require('pkg') | require("pkg")
+  ];
   for (const file of files) {
     const src = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8');
-    for (const m of src.matchAll(/^\s*import\s[^;]*?from\s+'([^']+)'/gm)) {
-      const spec = m[1];
-      const ok = spec.startsWith('node:') || spec.startsWith('./') || spec === '../composer.mjs';
-      assert.ok(ok, `${file} imports '${spec}' — runtime/ must not depend on packages`);
+    for (const pattern of patterns) {
+      for (const m of src.matchAll(pattern)) {
+        const spec = m[1];
+        const ok = spec.startsWith('node:') || spec.startsWith('./') || spec === '../composer.mjs';
+        assert.ok(ok, `${file} imports '${spec}' — runtime/ must not depend on packages`);
+      }
     }
   }
 });
