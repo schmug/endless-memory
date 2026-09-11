@@ -17,9 +17,13 @@ review the regenerated fixtures as a diff.
 
 **The five engine tests in `composer.test.mjs` cannot detect a sound change.**
 They assert structural bounds — event counts, finite pitches, deterministic
-replay — not values. All five pass against an altered engine. Only the
-byte-identity fixtures catch one. Do not treat a green `composer.test.mjs` as
-evidence the sound is intact.
+replay — not values. All five were observed passing against a one-value gain
+edit to `composer.mjs`, which is exactly the kind of change the fixtures exist
+to catch. A structural change is different: deleting the recall branch, for
+instance, would fail test 2's `assert(scenes.some(...recalled))`. So the rule is
+narrower than "they never catch anything" — they do not catch value-level
+changes to the sound. Do not treat a green `composer.test.mjs` as evidence the
+sound is intact.
 
 **`@strudel/core` is pinned to exactly `1.2.5`.** 1.2.6's published browser
 dependency fails to import under Node. The `overrides` block enforces this
@@ -36,9 +40,18 @@ clean checkout fails with `ENOENT`.
 **Fixture anchors are fixed.** `station.mjs export` with no argument reads the
 wall clock, so every fixture passes an explicit anchor.
 
-**`main` is gated** by a required `test` check with no bypass actors. The check
-context is the bare job id `test` — adding a CI matrix renames it to
-`test (18)` etc. and blocks every PR permanently. Change the ruleset first if
+**`main` is gated** by a required `test` check with no bypass actors — but this
+is a GitHub server-side ruleset, stored outside this repository. Nothing in-tree
+encodes or proves it, so if the ruleset is removed, given bypass actors, or its
+check renamed, this paragraph keeps asserting a protection that no longer
+exists, with no repo-visible signal. Treat it as last verified 2026-09-10, when
+a direct push to `main` was observed rejected with "Changes must be made through
+a pull request" and a PR was observed moving from BLOCKED to CLEAN. Re-verify
+with `gh api repos/schmug/endless-memory/rulesets` rather than trusting this
+line.
+
+The check context is the bare job id `test` — adding a CI matrix renames it to
+`test (22)` etc. and blocks every PR permanently. Change the ruleset first if
 the matrix is ever needed.
 
 ## Layout
