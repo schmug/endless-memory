@@ -5,21 +5,19 @@
   "main": "index.js",
   "scripts": {
     "pretest": "node station.mjs export 2026-09-11T14:00:00Z",
-    "test": "node --test composer.test.mjs",
+    "test": "node --test composer.test.mjs export.test.mjs",
+    "fixtures": "node test/update-fixtures.mjs",
     "export": "node station.mjs export"
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "@kabelsalat/web": "0.4.1",
-    "@strudel/core": "1.2.5",
-    "@strudel/mini": "^1.2.6"
-  },
+  "license": "MIT",
   "overrides": {
     "@strudel/core": "$@strudel/core"
   },
   "devDependencies": {
+    "@strudel/core": "1.2.5",
+    "@strudel/mini": "^1.2.6",
     "@strudel/transpiler": "^1.2.6"
   }
 }

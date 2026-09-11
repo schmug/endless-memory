@@ -1,12 +1,15 @@
 # Endless Memory — composition prototype
 
-A 76 BPM, synthesized lo-fi Strudel composition with a dated event journal. Open `endless-memory.strudel`, paste its contents into https://strudel.cc/ and press Play. Start your volume low and adjust by ear. No samples are downloaded by this score.
+A 76 BPM, synthesized lo-fi Strudel composition with a dated event journal. Generate `endless-memory.strudel` with `node station.mjs export` (see Try it below), paste its contents into https://strudel.cc/ and press Play. Start your volume low and adjust by ear. No samples are downloaded by this score.
 
 The score continues generating scenes indefinitely. Every 32 bars (about 101 seconds), it derives a scene from the original UTC score anchor and journal. It repeats and varies a motif, follows one of three related A-minor progressions, and thins the hats slightly near scene endings while keeping the backbeat. Night arrangements are sparser. Chord brightness and release drift over roughly 9–13 minutes, with only ±2.5% gain modulation. Occasional eight-bar phrases change their final melody note. Weather tone changes ease in over roughly 12 minutes. No finite playlist is looped, although musical material deliberately repeats.
 
+This repository is the canonical home for the engine. The original working
+directory it was developed in remains untouched as a frozen reference.
+
 ## Try it
 
-Requires Node 18 or newer. Run these commands from this folder:
+Requires Node 22, the version CI tests. Run these commands from this folder:
 
 ```
 node station.mjs export
@@ -45,6 +48,10 @@ npm test
 ```
 
 Tests run the exported code through Strudel’s editor transpiler, then exercise the real Strudel pattern engine over a 45-minute span, including section crossings, remote seeks, deterministic replay, future-event isolation, and motif recall. Strudel core is pinned to 1.2.5 for the Node verification harness because 1.2.6's published browser dependency fails to import under Node. The corrected export was also started in the Strudel browser REPL without the original parse error. Subjective sound quality still needs a listening pass.
+
+The suite also pins the generated score byte-for-byte at two fixed anchors: a quiet afternoon (28 scenes, clear, no motif recall) and a rainy night (27 scenes, 8 recalled scenes, 15 motif handoffs). Those fixtures exist because the older tests assert structural bounds rather than values — they pass unchanged against an altered engine, so they cannot detect a change to the approved sound. Run `npm run fixtures` to regenerate the fixtures after a deliberate change, and review the result as a diff.
+
+The Strudel packages are test-harness only. `composer.mjs` and `station.mjs` import nothing outside Node's standard library, so the project has no runtime dependencies.
 
 ## Next listening and development pass
 
