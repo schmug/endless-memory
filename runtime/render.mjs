@@ -97,11 +97,21 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const i = process.argv.indexOf(`--${name}`);
     return i === -1 ? fallback : process.argv[i + 1];
   };
-  const journalPath = new URL('../journal.json', import.meta.url);
+  // --journal points the renderer at another log; with no flag it reads the repo's
+  // own, so the broadcast invocation is unchanged. Tests pass a fixture, so an
+  // unrelated edit to journal.json can no longer turn them red (#20). A bare
+  // --journal with no path is an error rather than a fall back to the repo's
+  // journal, which would silently re-couple a caller that meant to opt out of it.
+  const journalArg = arg('journal');
+  if (process.argv.includes('--journal') && !journalArg) {
+    console.error('--journal needs a path');
+    process.exit(1);
+  }
+  const journalPath = journalArg ?? new URL('../journal.json', import.meta.url);
   const journal = validate(JSON.parse(readFileSync(journalPath, 'utf8')));
 
   const out = arg('out');
-  if (!out) throw new Error('usage: node runtime/render.mjs --anchor <ISO> --out <path|-> [--chunk-cycles 8] [--seconds N]');
+  if (!out) throw new Error('usage: node runtime/render.mjs --anchor <ISO> --out <path|-> [--journal <path>] [--chunk-cycles 8] [--seconds N]');
 
   const anchorArg = arg('anchor', new Date().toISOString());
   const anchorCycle = cycleForInstant(anchorArg);
