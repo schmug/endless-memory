@@ -39,7 +39,15 @@ because `composer.test.mjs` is their only importer.
 
 **Do not remove the `pretest` script.** `composer.test.mjs:26` reads
 `endless-memory.strudel` from disk and never generates it. Without `pretest` a
-clean checkout fails with `ENOENT`.
+clean checkout fails with `ENOENT`. The script runs `test/pretest.mjs`, which
+exports through `exportFixture` — a temp dir, a copy of the CLI, and a journal
+literal — and writes only the `.strudel` to the repo root. It never reads the
+repo's own `journal.json`, so a malformed or invalid journal cannot stop
+`node --test` from starting (#6). Two things it must keep doing: writing that
+file at the repo root, and passing an explicit anchor.
+
+`pretest` no longer writes `score-45min.json` or `listen.url` at the repo root.
+`npm run export` still does; nothing under test reads either one.
 
 **Fixture anchors are fixed.** `station.mjs export` with no argument reads the
 wall clock, so every fixture passes an explicit anchor.

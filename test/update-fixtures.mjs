@@ -1,6 +1,7 @@
-// Golden fixture definitions and the export helper shared with export.test.mjs.
-// Run directly (`npm run fixtures`) to regenerate fixtures after a deliberate
-// change to the sound. The regenerated files must be reviewed as a diff.
+// Golden fixture definitions and the export helper shared with export.test.mjs
+// and test/pretest.mjs. Run directly (`npm run fixtures`) to regenerate the
+// fixtures after a deliberate change to the sound. The regenerated files must
+// be reviewed as a diff.
 import { mkdtemp, cp, writeFile, readFile, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
