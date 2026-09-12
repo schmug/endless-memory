@@ -1,8 +1,10 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Writable } from 'node:stream';
 import { BARS, VOICES } from '../composer.mjs';
 import { sampleAt, CYCLE_SECONDS } from './voices.mjs';
@@ -17,6 +19,15 @@ const WEATHERED = {
     { id: 'fixture-weather-1', at: '2026-09-10T18:00:00Z', type: 'weather', value: 'rain' },
   ],
 };
+
+// Every test below that spawns the CLI passes --journal. Without it render.mjs reads
+// the repo's own journal.json, so an unrelated edit to that data file turned these
+// tests red for reasons that had nothing to do with the renderer (#20). QUIET is what
+// the repo journal holds today, so the audio these tests assert on is unchanged.
+const work = mkdtempSync(join(tmpdir(), 'em-render-'));
+const JOURNAL = join(work, 'journal.json');
+writeFileSync(JOURNAL, JSON.stringify(QUIET, null, 2) + '\n');
+after(() => rmSync(work, { recursive: true, force: true }));
 
 // Render [start, start+span) in chunks of `size`, concatenated.
 function chunked(start, span, size, journal) {
@@ -120,6 +131,7 @@ test('the CLI writes PCM with no stray bytes before it', () => {
   const stdout = execFileSync(process.execPath, [
     new URL('./render.mjs', import.meta.url).pathname,
     '--anchor', '2026-09-11T14:00:00Z', '--out', out, '--seconds', '6',
+    '--journal', JOURNAL,
   ], { stdio: 'pipe' });
   assert.equal(stdout.length, 0, `expected no stdout output when writing to a file, got ${stdout.length} bytes`);
   const buf = readFileSync(out);
@@ -134,6 +146,7 @@ test('the CLI writes clean PCM to /dev/stdout itself, not just to a file', () =>
   const stdout = execFileSync(process.execPath, [
     new URL('./render.mjs', import.meta.url).pathname,
     '--anchor', '2026-09-11T14:00:00Z', '--out', '/dev/stdout', '--seconds', '6',
+    '--journal', JOURNAL,
   ], { stdio: 'pipe', maxBuffer: 16 * 1024 * 1024 });
   assert.equal(stdout.length % 4, 0, 'expected whole 16-bit stereo frames on stdout');
   assert.ok(stdout.length > 6 * 48000 * 4 * 0.9, `expected ~6s of audio on stdout, got ${stdout.length} bytes`);
@@ -150,6 +163,7 @@ test('the CLI accepts - as stdout and writes whole PCM frames there', () => {
   const stdout = execFileSync(process.execPath, [
     new URL('./render.mjs', import.meta.url).pathname,
     '--anchor', '2026-09-11T14:00:00Z', '--out', '-', '--seconds', '6',
+    '--journal', JOURNAL,
   ], { stdio: 'pipe', maxBuffer: 16 * 1024 * 1024 });
   assert.equal(stdout.length % 4, 0, 'expected whole 16-bit stereo frames on stdout');
   assert.ok(stdout.length > 6 * 48000 * 4 * 0.9, `expected ~6s of audio on stdout, got ${stdout.length} bytes`);
@@ -166,6 +180,7 @@ test('an unbounded run reports peak and clipping on stderr while still streaming
   const child = spawn(process.execPath, [
     new URL('./render.mjs', import.meta.url).pathname,
     '--anchor', '2026-09-11T14:00:00Z', '--out', '-', '--chunk-cycles', '1',
+    '--journal', JOURNAL,
   ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
   // One chunk-cycle of dual-mono 16-bit frames; stop two intervals in, by which point
@@ -200,12 +215,39 @@ test('the CLI reports a clear error for an unparseable --anchor, not a NaN cycle
       execFileSync(process.execPath, [
         new URL('./render.mjs', import.meta.url).pathname,
         '--anchor', 'not-a-date', '--out', out, '--seconds', '1',
+        '--journal', JOURNAL,
       ], { stdio: 'pipe' });
     },
     (err) => {
       const stderr = err.stderr.toString();
       assert.ok(stderr.includes('not-a-date'), `expected error naming the bad anchor, got: ${stderr}`);
       assert.ok(!stderr.includes('NaN'), `expected no leaked NaN, got: ${stderr}`);
+      return true;
+    },
+  );
+});
+
+// Without this the suite cannot tell a wired-up --journal from an ignored one: if the
+// flag were dropped, every test above would quietly fall back to the repo's valid
+// journal.json and still pass, restoring the coupling #20 removed. An invalid journal
+// at the flag's path must therefore be the journal that gets read.
+test('the CLI reads the journal --journal names, not the repo default', () => {
+  const badPath = join(work, 'invalid-journal.json');
+  writeFileSync(badPath, JSON.stringify({
+    version: 1, seed: 'x',
+    events: [{ id: 'bad-1', at: 'not-a-date', type: 'weather', value: 'rain' }],
+  }));
+  assert.throws(
+    () => {
+      execFileSync(process.execPath, [
+        new URL('./render.mjs', import.meta.url).pathname,
+        '--anchor', '2026-09-11T14:00:00Z', '--out', '-', '--seconds', '1',
+        '--journal', badPath,
+      ], { stdio: 'pipe' });
+    },
+    (err) => {
+      assert.match(err.stderr.toString(), /Invalid or duplicate event/,
+        `expected the journal at --journal to be validated, got: ${err.stderr}`);
       return true;
     },
   );
