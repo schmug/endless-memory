@@ -48,3 +48,23 @@ test('the chords drift marker follows the chords gain in VOICES', async () => {
   assert.ok(marker, 'no `value.gain===` drift marker in the generated source');
   assert.equal(marker[1], '.15', 'drift marker did not follow the chords gain in VOICES; chords lose cutoff and release drift');
 });
+
+// Strudel's transpiler reads double-quoted strings as mini-notation, so a stray
+// `"` anywhere in the export silently changes what the source means. station.mjs
+// applies the single-quote rule as it builds each literal, which covers the
+// journal but not the five composer.mjs functions the prelude embeds via
+// `.toString()`. Those are single-quoted today; this is what keeps them that
+// way, including across a deliberate `npm run fixtures`. (Backticks are
+// mini-notation too, but nothing emits one, so they are not checked here.)
+test('the generated source is single-quoted throughout', async () => {
+  for (const fixture of FIXTURES) {
+    const { strudel } = await exportOnce(fixture);
+    const lines = strudel.split('\n');
+    const index = lines.findIndex((line) => line.includes('"'));
+    assert.equal(
+      index,
+      -1,
+      `${fixture.name} line ${index + 1} contains a double quote, which Strudel's transpiler reads as mini-notation rather than a string: ${JSON.stringify(lines[index]?.slice(0, 120))}`,
+    );
+  }
+});
