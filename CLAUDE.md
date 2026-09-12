@@ -14,6 +14,20 @@ one source of truth instead of duplicating it. What must stay fixed is the
 *generated* Strudel source, not the source of `composer.mjs` itself: edits
 that move that output fail `export.test.mjs`.
 
+**The synthesiser's filters are one-pole on purpose.** `runtime/voices.mjs`
+filters at 6 dB/octave with no resonance. superdough — what Strudel would have
+played the same score through — builds `BiquadFilterNode`s at 12 dB/octave with
+a +1 dB resonant peak (`helpers.mjs:127`, wired at `superdough.mjs:726,750`;
+note Web Audio reads `Q` in decibels for lowpass and highpass). Over a
+five-minute render the difference measures as −3 dB across 1–4 kHz and +2 dB
+above 8 kHz, at 0.4 LUFS integrated difference — small enough that no level
+check reveals it. It was listened to on 2026-09-11, ten continuous minutes plus
+a level-matched A/B against a biquad reference, and approved (#14). **Do not
+convert these filters to biquads.** The gap is real and measurable and still not
+a defect. Converting them was observed to fail the golden in
+`runtime/fixtures/golden-quiet.json`, which is the correct outcome: it is an
+unapproved sound change.
+
 **`npm run fixtures` blesses a sound change.** It is the documented escape
 hatch from a failing golden test, which makes it the easiest way to destroy the
 thing those tests protect. Run it only when a sound change is deliberate, and
