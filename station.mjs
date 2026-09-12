@@ -2,7 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { BPM, BARS, BAR_MS, EPOCH, hash, pick, atmosphere, identity, scene, validate, patternSource } from './composer.mjs';
+import { BPM, BARS, BAR_MS, EPOCH, hash, pick, atmosphere, identity, scene, validate, patternSource, gainSource } from './composer.mjs';
 // Strudel's transpiler reads double-quoted strings and backticks as
 // mini-notation, so every string in the generated source has to be
 // single-quoted. That rule is applied here, while each literal is built, not by
@@ -41,7 +41,7 @@ if (command === 'weather' || command === 'remember') {
   // `part.<field>` reads and the chords' `part.cutoff` come out of structured
   // data rather than being matched back out of rendered text.
   const expression = patternSource();
-  const source = prelude + `const cache=new Map();\nconst startBar=${startBar};\nconst music=new Pattern(state=>{\n const begin=Number(state.span.begin), end=Number(state.span.end);\n const haps=[];\n for(let i=Math.floor((begin+startBar)/BARS);i<Math.ceil((end+startBar)/BARS);i++){\n  if(!cache.has(i)){const part=scene(i,journal);cache.set(i,${expression});}\n  const a=Math.max(begin,i*BARS-startBar), b=Math.min(end,(i+1)*BARS-startBar);\n  haps.push(...cache.get(i).early(startBar-i*BARS).queryArc(a,b));\n }\n if(cache.size>8){for(const k of cache.keys())if(k<Math.floor((begin+startBar)/BARS)-1)cache.delete(k);}\n return haps.map(hap=>{\n  const drift=atmosphere(Number((hap.whole || hap.part).begin)+startBar,journal);\n  return hap.withValue(value=>({...value, gain:value.gain*drift.gain, ...(value.gain===.14 ? {cutoff:drift.cutoff,release:drift.release} : {})}));\n });\n});\nmusic\n`;
+  const source = prelude + `const cache=new Map();\nconst startBar=${startBar};\nconst music=new Pattern(state=>{\n const begin=Number(state.span.begin), end=Number(state.span.end);\n const haps=[];\n for(let i=Math.floor((begin+startBar)/BARS);i<Math.ceil((end+startBar)/BARS);i++){\n  if(!cache.has(i)){const part=scene(i,journal);cache.set(i,${expression});}\n  const a=Math.max(begin,i*BARS-startBar), b=Math.min(end,(i+1)*BARS-startBar);\n  haps.push(...cache.get(i).early(startBar-i*BARS).queryArc(a,b));\n }\n if(cache.size>8){for(const k of cache.keys())if(k<Math.floor((begin+startBar)/BARS)-1)cache.delete(k);}\n return haps.map(hap=>{\n  const drift=atmosphere(Number((hap.whole || hap.part).begin)+startBar,journal);\n  return hap.withValue(value=>({...value, gain:value.gain*drift.gain, ...(value.gain===${gainSource('chords')} ? {cutoff:drift.cutoff,release:drift.release} : {})}));\n });\n});\nmusic\n`;
   await writeFile(resolve(dir,'endless-memory.strudel'),source);
   const score=[];
   for(let i=Math.floor(startBar/BARS); i<=Math.floor((startBar+45*60000/BAR_MS)/BARS); i++) {

@@ -144,3 +144,14 @@ function voiceSource(voice) {
 export function patternSource() {
   return `stack(\n  ${VOICES.map(voice => voiceSource(voice)).join(',\n  ')}\n)`;
 }
+// One voice's gain, formatted as it appears in the generated source. The
+// generated runtime has no voice labels on its haps, so it tells them apart by
+// gain; that literal comes from here rather than being restated, because a
+// hand-synced copy desyncs silently — the export still parses and the sound
+// quietly loses its weather response. This discriminates only while the voices'
+// gains stay distinct, which they are.
+export function gainSource(field) {
+  const voice = VOICES.find(v => v.field === field);
+  if (!voice) throw Error(`No voice named ${field} in VOICES`);
+  return fmt(voice.gain);
+}
