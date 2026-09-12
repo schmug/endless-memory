@@ -141,6 +141,22 @@ test('the CLI writes clean PCM to /dev/stdout itself, not just to a file', () =>
   assert.ok(peak > 0.01, `expected audible output on stdout, peak ${peak}`);
 });
 
+// `-` is the spelling the broadcast pipeline uses. It must reach fd 1 without
+// reopening a path: on Linux /dev/stdout is /proc/self/fd/1 and libuv backs child
+// stdio with a socketpair, where open() returns ENXIO. That failure is invisible on
+// macOS, so this test only bites in CI — which is exactly where it needs to.
+test('the CLI accepts - as stdout and writes whole PCM frames there', () => {
+  const stdout = execFileSync(process.execPath, [
+    new URL('./render.mjs', import.meta.url).pathname,
+    '--anchor', '2026-09-11T14:00:00Z', '--out', '-', '--seconds', '6',
+  ], { stdio: 'pipe', maxBuffer: 16 * 1024 * 1024 });
+  assert.equal(stdout.length % 4, 0, 'expected whole 16-bit stereo frames on stdout');
+  assert.ok(stdout.length > 6 * 48000 * 4 * 0.9, `expected ~6s of audio on stdout, got ${stdout.length} bytes`);
+  let peak = 0;
+  for (let i = 0; i < stdout.length; i += 2) peak = Math.max(peak, Math.abs(stdout.readInt16LE(i)) / 32768);
+  assert.ok(peak > 0.01, `expected audible output on stdout, peak ${peak}`);
+});
+
 test('the CLI reports a clear error for an unparseable --anchor, not a NaN cycle', () => {
   const out = `${process.env.TMPDIR ?? '/tmp'}/em-cli-badanchor-${process.pid}.raw`;
   assert.throws(

@@ -78,7 +78,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const journal = validate(JSON.parse(readFileSync(journalPath, 'utf8')));
 
   const out = arg('out');
-  if (!out) throw new Error('usage: node runtime/render.mjs --anchor <ISO> --out <path> [--chunk-cycles 8] [--seconds N]');
+  if (!out) throw new Error('usage: node runtime/render.mjs --anchor <ISO> --out <path|-> [--chunk-cycles 8] [--seconds N]');
 
   const anchorArg = arg('anchor', new Date().toISOString());
   const anchorCycle = cycleForInstant(anchorArg);
@@ -87,7 +87,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.exit(1);
   }
 
-  const sink = createWriteStream(out);
+  // Writing to stdout means writing to fd 1, never reopening the path. On Linux
+  // /dev/stdout is /proc/self/fd/1, and libuv backs child stdio with a socketpair —
+  // open() on a socket returns ENXIO, so `--out /dev/stdout` fails outright there
+  // while passing on macOS. stdout is the production path (PCM piped to `ffmpeg -re`),
+  // so it has to work on Linux; `-` is the conventional spelling for it.
+  const isStdout = out === '-' || out === '/dev/stdout' || out === '/dev/fd/1';
+  const sink = isStdout
+    ? createWriteStream(null, { fd: 1, autoClose: false })
+    : createWriteStream(out);
   await run({
     anchorCycle,
     chunkCycles: Number(arg('chunk-cycles', 8)),
