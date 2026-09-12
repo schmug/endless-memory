@@ -33,9 +33,12 @@ sound is intact.
 dependency fails to import under Node. The `overrides` block enforces this
 against `@strudel/mini`, which requests 1.2.6.
 
-**No runtime dependencies.** `composer.mjs` and `station.mjs` import nothing
-outside Node's standard library. The Strudel packages are `devDependencies`
-because `composer.test.mjs` is their only importer.
+**No runtime dependencies.** `composer.mjs`, `station.mjs` and every non-test
+file in `runtime/` import nothing outside Node's standard library, except that
+`runtime/` may import `composer.mjs`. A guard in `runtime/render.test.mjs`
+enforces that. The Strudel packages are `devDependencies` because only tests
+import them — `composer.test.mjs`, `runtime/mini.test.mjs` and
+`runtime/schedule.test.mjs`, where they act as the differential oracle.
 
 **Do not remove the `pretest` script.** `composer.test.mjs:26` reads
 `endless-memory.strudel` from disk and never generates it. Without `pretest` a
@@ -48,11 +51,11 @@ wall clock, so every fixture passes an explicit anchor.
 is a GitHub server-side ruleset, stored outside this repository. Nothing in-tree
 encodes or proves it, so if the ruleset is removed, given bypass actors, or its
 check renamed, this paragraph keeps asserting a protection that no longer
-exists, with no repo-visible signal. Treat it as last verified 2026-09-10, when
-a direct push to `main` was observed rejected with "Changes must be made through
-a pull request" and a PR was observed moving from BLOCKED to CLEAN. Re-verify
-with `gh api repos/schmug/endless-memory/rulesets` rather than trusting this
-line.
+exists, with no repo-visible signal. Treat it as last verified 2026-09-12, when
+`gh api repos/schmug/endless-memory/rulesets` returned the `main` ruleset as
+`active` with required check `test` and an empty `bypass_actors`, and PR #16 was
+observed blocked on a red `test` and mergeable only once it went green.
+Re-verify with that same command rather than trusting this line.
 
 The check context is the bare job id `test` — adding a CI matrix renames it to
 `test (22)` etc. and blocks every PR permanently. Change the ruleset first if
@@ -65,6 +68,13 @@ the matrix is ever needed.
 - `station.mjs` — CLI: `export [ISO]`, `weather <clear|cloudy|rain|snow> [ISO]`,
   `remember <mID> [ISO]`. Builds the exported source by stringifying the model's
   own functions, so the browser runs the same tested code.
+- `runtime/` — the audio runtime (piece C). `mini.mjs` parses the frozen
+  mini-notation subset `composer.mjs` emits, `schedule.mjs` joins scenes into
+  timed events, `voices.mjs` synthesises them, `render.mjs` chunks and writes
+  PCM. CLI: `node runtime/render.mjs --anchor <ISO> --out <path|-> [--seconds N]`,
+  where `-` is stdout. `runtime/fixtures/golden-quiet.json` pins a PCM hash and
+  levels; `npm run golden` regenerates it, with the same caution as
+  `npm run fixtures`.
 - `journal.json` — append-only event log. Events take effect at the next scene
   boundary (32 bars, about 101 seconds).
 - `test/fixtures/` — pinned exports. `test/update-fixtures.mjs` regenerates them.
@@ -74,10 +84,10 @@ the matrix is ever needed.
 
 ## Verification
 
-`npm test` — expect 8 passing, 0 failing. Report counts, not "tests pass".
+`npm test` — expect 37 passing, 0 failing. Report counts, not "tests pass".
 
 ## Not built yet
 
-Live weather feed, audio runtime, visuals, broadcast, listener interaction.
+Live weather feed, visuals, broadcast, listener interaction.
 Each needs its own spec. The location for the weather feed is still undecided
 between Boston, Winthrop and Marblehead; `research/` holds the evidence.
