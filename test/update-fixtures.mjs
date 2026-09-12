@@ -41,10 +41,14 @@ export const FIXTURES = [
 // Spawns the real CLI in a throwaway directory. station.mjs resolves its paths
 // from its own file location, so the copy reads and writes only inside `work`
 // and never touches the repo or its journal.
-export async function exportFixture(fixture) {
+// `patchComposer` rewrites the copied composer.mjs before the export runs. It
+// exists so a test can prove the generated source tracks the VOICES table
+// rather than restating it; the fixture path never passes it.
+export async function exportFixture(fixture, { patchComposer } = {}) {
   const work = await mkdtemp(join(tmpdir(), 'endless-memory-'));
   try {
-    await cp(join(repo, 'composer.mjs'), join(work, 'composer.mjs'));
+    const composer = await readFile(join(repo, 'composer.mjs'), 'utf8');
+    await writeFile(join(work, 'composer.mjs'), patchComposer ? patchComposer(composer) : composer);
     await cp(join(repo, 'station.mjs'), join(work, 'station.mjs'));
     await writeFile(join(work, 'journal.json'), JSON.stringify(fixture.journal, null, 2) + '\n');
     await run(process.execPath, ['station.mjs', 'export', fixture.anchor], { cwd: work });
