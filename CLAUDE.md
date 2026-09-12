@@ -106,7 +106,7 @@ the matrix is ever needed.
 
 ## Verification
 
-`npm test` — expect 37 passing, 0 failing. Report counts, not "tests pass".
+`npm test` — report the pass/fail counts it prints, not "tests pass".
 
 ## Not built yet
 
