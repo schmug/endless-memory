@@ -97,7 +97,7 @@ export function scene(index, journal) {
 // One source of truth for every voice's synthesis parameters. patternSource()
 // assembles the generated string from this table instead of a template literal
 // so the audio runtime can import the same data. A filter's `dynamic` field
-// names a property to read off the `s` argument at render time (the chords'
+// names a scene property the generated source reads at render time (the chords'
 // cutoff drifts with weather); a `value` field is a fixed constant instead.
 export const VOICES = [
   { field: 'chords', kind: 'note', wave: 'triangle',
@@ -124,17 +124,23 @@ function fmt(n) {
   const str = String(n);
   return str.startsWith('0.') ? str.slice(1) : str;
 }
-function voiceSource(voice, s) {
-  const pattern = JSON.stringify(s[voice.field]);
+// Emits an expression, not a rendered scene. Every scene-dependent value is a
+// property read off a `part` variable at render time, so the voice's field name
+// and its dynamic filter are taken straight from VOICES and never have to be
+// recovered from the generated text.
+function voiceSource(voice) {
+  const pattern = `mini(part.${voice.field})`;
   let out = voice.kind === 'note'
     ? `note(${pattern}).s('${voice.wave}')`
     : `s('${voice.wave}').struct(${pattern})`;
   if (voice.freq !== undefined) out += `.freq(${fmt(voice.freq)})`;
   out += `.attack(${fmt(voice.attack)}).decay(${fmt(voice.decay)}).sustain(${fmt(voice.sustain)}).release(${fmt(voice.release)})`;
-  for (const filter of voice.filters) out += `.${filter.type}(${fmt(filter.dynamic ? s[filter.dynamic] : filter.value)})`;
+  for (const filter of voice.filters) out += `.${filter.type}(${filter.dynamic ? `part.${filter.dynamic}` : fmt(filter.value)})`;
   out += `.gain(${fmt(voice.gain)})`;
   return out;
 }
-export function patternSource(s) {
-  return `stack(\n  ${VOICES.map(voice => voiceSource(voice, s)).join(',\n  ')}\n)`;
+// Valid only where `part` is a scene in scope. station.mjs's export embeds this
+// inside the per-scene cache that binds it.
+export function patternSource() {
+  return `stack(\n  ${VOICES.map(voice => voiceSource(voice)).join(',\n  ')}\n)`;
 }
