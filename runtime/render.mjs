@@ -50,23 +50,46 @@ export function toPcm(samples) {
 // passing (NaN === 0 is false; !(NaN > 0) is true).
 export const isSilent = (peak) => !(peak > 0);
 
+// A continuous stream never leaves run()'s loop, so anything reported only after it
+// is never reported at all (#12) — the summary has to come from inside. Every 12
+// chunks is ~5 minutes of audio at the production chunkCycles of 8 (96 cycles, three
+// scene boundaries), so a day of broadcast logs ~288 lines rather than drowning them.
+export const REPORT_EVERY_CHUNKS = 12;
+
 export async function run({ anchorCycle, chunkCycles = 8, sink, seconds = Infinity, journal }) {
   validate(journal);
   const limit = seconds === Infinity ? Infinity : Math.ceil(seconds / CYCLE_SECONDS);
   let rendered = 0;
   let totalClipped = 0;
   let maxPeak = 0;
+  // Interval figures, reset at every periodic report: a peak from three days ago must
+  // not go on masking the current one over a run that never ends.
+  let chunks = 0;
+  let sinceCycles = 0;
+  let sinceClipped = 0;
+  let sincePeak = 0;
   for (let cycle = anchorCycle; rendered < limit; cycle += chunkCycles) {
     const count = Math.min(chunkCycles, limit - rendered);
     const { buf, peak, clipped } = toPcm(renderChunk(cycle, count, journal));
     if (isSilent(peak)) throw new Error(`silent chunk at cycle ${cycle} — this is a bug, not valid output`);
     totalClipped += clipped;
     if (peak > maxPeak) maxPeak = peak;
+    sinceClipped += clipped;
+    if (peak > sincePeak) sincePeak = peak;
     if (!sink.write(buf)) await once(sink, 'drain');
     rendered += count;
+    sinceCycles += count;
+    // stderr, never stdout — stdout is a PCM channel (see F1/the stdout-banner incident).
+    if (++chunks % REPORT_EVERY_CHUNKS === 0) {
+      console.error(`render: +${sinceCycles} cycles since last report, peak ${sincePeak.toFixed(4)}, ${sinceClipped} clipped sample(s) in that span`);
+      sinceCycles = 0;
+      sinceClipped = 0;
+      sincePeak = 0;
+    }
   }
-  // stderr, never stdout — stdout is a PCM channel (see F1/the stdout-banner incident).
-  console.error(`render: ${rendered} cycles, peak ${maxPeak.toFixed(4)}, ${totalClipped} clipped sample(s)`);
+  // Whole-run totals. Only a finite run gets here; a stream is stopped, not finished.
+  // stderr, never stdout — same reason as above.
+  console.error(`render: ${rendered} cycles total, peak ${maxPeak.toFixed(4)}, ${totalClipped} clipped sample(s) over the whole run`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

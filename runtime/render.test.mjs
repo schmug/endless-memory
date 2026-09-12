@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { Writable } from 'node:stream';
 import { BARS, VOICES } from '../composer.mjs';
 import { sampleAt, CYCLE_SECONDS } from './voices.mjs';
-import { renderChunk, toPcm, isSilent, run, PRE_ROLL_CYCLES } from './render.mjs';
+import { renderChunk, toPcm, isSilent, run, PRE_ROLL_CYCLES, REPORT_EVERY_CHUNKS } from './render.mjs';
 import { pcmHash, GOLDEN } from './update-golden.mjs';
 
 const QUIET = { version: 1, seed: 'window-seat-v1', events: [] };
@@ -155,6 +156,41 @@ test('the CLI accepts - as stdout and writes whole PCM frames there', () => {
   let peak = 0;
   for (let i = 0; i < stdout.length; i += 2) peak = Math.max(peak, Math.abs(stdout.readInt16LE(i)) / 32768);
   assert.ok(peak > 0.01, `expected audible output on stdout, peak ${peak}`);
+});
+
+// The production streaming path omits --seconds, so run()'s loop never exits and
+// anything reported after it is reported never (#12). Drive a real unbounded run,
+// stop it once it is well past a reporting interval, and check the summary arrived —
+// on stderr, because stdout is carrying the PCM.
+test('an unbounded run reports peak and clipping on stderr while still streaming', async () => {
+  const child = spawn(process.execPath, [
+    new URL('./render.mjs', import.meta.url).pathname,
+    '--anchor', '2026-09-11T14:00:00Z', '--out', '-', '--chunk-cycles', '1',
+  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+  // One chunk-cycle of dual-mono 16-bit frames; stop two intervals in, by which point
+  // a working periodic report has fired at least once.
+  const chunkBytes = (sampleAt(1) - sampleAt(0)) * 4;
+  let pcmBytes = 0;
+  let stdoutTail = Buffer.alloc(0);
+  let strayOnStdout = false;
+  let stderr = '';
+  child.stdout.on('data', (d) => {
+    // Join across writes: a summary misrouted to fd 1 could straddle a chunk boundary.
+    const scan = Buffer.concat([stdoutTail, d]);
+    if (scan.includes('render:')) strayOnStdout = true;
+    stdoutTail = scan.subarray(Math.max(0, scan.length - 16));
+    pcmBytes += d.length;
+    if (pcmBytes > 2 * REPORT_EVERY_CHUNKS * chunkBytes) child.kill();
+  });
+  child.stderr.on('data', (d) => { stderr += d; });
+  await once(child, 'exit');
+
+  assert.ok(pcmBytes > REPORT_EVERY_CHUNKS * chunkBytes,
+    `expected the child to stream past a reporting interval, got ${pcmBytes} bytes; stderr: ${stderr}`);
+  assert.match(stderr, /render: \+\d+ cycles since last report/,
+    `expected a periodic summary during an unbounded run, got stderr: ${stderr}`);
+  assert.ok(!strayOnStdout, 'the summary must go to stderr — stdout is the PCM channel');
 });
 
 test('the CLI reports a clear error for an unparseable --anchor, not a NaN cycle', () => {
