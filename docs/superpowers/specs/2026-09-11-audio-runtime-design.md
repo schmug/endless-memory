@@ -235,10 +235,52 @@ a banner on import silently corrupts the stream in a way every structural check 
 3c. `runtime/` reads voice parameters from `composer.mjs`'s exported `VOICES` and does
    not restate any of them. A mutation to `VOICES` changes the rendered audio.
 4. A continuous render of at least 24 simulated hours completes with zero silent chunks
-   and no memory growth beyond warm-up.
+   and no memory growth beyond warm-up. **Met 2026-09-13 — see Endurance evidence.**
 5. `runtime/` imports nothing outside Node built-ins and `composer.mjs`, asserted by a
    test.
 6. `test/fixtures/*.strudel` are unchanged — piece C does not touch the score.
+
+## Endurance evidence (criterion 4)
+
+Measured 2026-09-13, Node v22.22.2 on Linux, via `npm run endurance` — the defaults
+are 24 hours, anchor `2026-09-11T12:00:00Z`, the quiet journal, 8-cycle chunks and
+8 phases. Reproduce rather than trust this table: it is one run on one machine, and
+the figures below are what that run printed.
+
+```
+rendered 3420 chunks (24.00 h of audio) in 791.0 s wall — 109x realtime
+silent chunks: 0
+phase  span (h)     samples   median RSS    min RSS     max RSS   median heap
+    1   0.0–3.0         427     167.4 MB    68.5 MB    176.6 MB       8.1 MB (warm-up)
+    2   3.0–6.0         427     176.6 MB   167.4 MB    176.6 MB      10.6 MB
+    3   6.0–9.0         428     172.0 MB   167.5 MB    176.6 MB      10.6 MB
+    4   9.0–12.0        427     176.6 MB   167.5 MB    176.6 MB      10.7 MB
+    5  12.0–15.0        428     172.3 MB   167.6 MB    176.9 MB      12.0 MB
+    6  15.0–18.0        427     176.8 MB   167.7 MB    176.9 MB      12.1 MB
+    7  18.0–21.0        428     177.0 MB   167.8 MB    186.3 MB      10.7 MB
+    8  21.0–24.0        428     181.7 MB   181.7 MB    181.8 MB      11.1 MB
+post-warm-up RSS slope:  0.302 MB/h (7.3 MB/day)
+post-warm-up heap slope: 0.039 MB/h (0.9 MB/day)
+verdict: PASS
+```
+
+Zero silent chunks over 3420 chunks, counted in the metering sink rather than taken
+from `render.mjs`'s own guard — that guard throws on the first silent chunk, so a
+zero it produced by surviving would prove nothing.
+
+"No memory growth beyond warm-up" is met, but it is worth reading the two figures
+rather than the verdict. The **heap** is flat: 0.9 MB/day across a simulated day, on
+a live set of 8–12 MB. Nothing accumulates. **RSS** carries a slow 7.3 MB/day creep,
+and phase 8 steps to 181.7 MB and holds there — allocator behaviour around the ~5 MB
+Buffer and Float32Array each chunk allocates and drops, not a live-set leak, which is
+what the flat heap establishes. Warm-up is real and finishes well inside phase 1: RSS
+enters at 68.5 MB and reaches its plateau before the 3-hour mark.
+
+7.3 MB/day is inside the 48 MB/day budget the check enforces, and the deployment
+design makes it self-limiting anyway: journal changes are applied by restarting the
+renderer, so the process rarely lives long enough for the creep to matter. A run
+that needed to survive weeks untouched would want this re-measured over a longer
+span rather than extrapolated from one day.
 
 ## Deployment context (not this spec's work)
 
