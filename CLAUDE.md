@@ -96,7 +96,9 @@ the matrix is ever needed.
   PCM. CLI: `node runtime/render.mjs --anchor <ISO> --out <path|-> [--seconds N]`,
   where `-` is stdout. `runtime/fixtures/golden-quiet.json` pins a PCM hash and
   levels; `npm run golden` regenerates it, with the same caution as
-  `npm run fixtures`.
+  `npm run fixtures`. `endurance.mjs` is the long-run check behind the spec's
+  acceptance criterion 4 — deliberately outside `npm test`, run with
+  `npm run endurance`.
 - `journal.json` — append-only event log. Events take effect at the next scene
   boundary (32 bars, about 101 seconds).
 - `test/fixtures/` — pinned exports. `test/update-fixtures.mjs` regenerates them.
@@ -107,6 +109,16 @@ the matrix is ever needed.
 ## Verification
 
 `npm test` — report the pass/fail counts it prints, not "tests pass".
+
+`npm run endurance` renders 24 simulated hours (about 13 minutes at ~109x realtime)
+and reports RSS by phase, a post-warm-up slope and a silent-chunk count. It is not
+part of `npm test` and is not a substitute for it: it proves the renderer survives a
+day, not that the sound is intact. Its slope is fitted on per-phase medians with the
+warm-up phase excluded, because a whole-run fit over raw samples on this project once
+reported "+111 MB/day" for a process that was flat after warm-up. Both figures print;
+the whole-run one is context, not the criterion. Last measured 2026-09-13: 0 silent
+chunks over 3420 chunks, RSS +7.3 MB/day and heap +0.9 MB/day post-warm-up, recorded
+in `docs/superpowers/specs/2026-09-11-audio-runtime-design.md`.
 
 ## Not built yet
 
