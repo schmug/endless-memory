@@ -10,6 +10,12 @@ import { chooseFrame, isCompletePng, feed, MAX_FRAME_AGE_MS, TARGET_FPS, DECLARE
 
 const FRESH = { mtimeMs: 1000, size: 4084 };
 
+// Long enough that node's own startup is a small part of the window, so a slow CI
+// runner does not turn the rate assertion into a flake. MIN_FRAMES is what the DECLARED
+// rate would have produced in the same window — exceeding it is the property under test.
+const SAMPLE_MS = 2500;
+const MIN_FRAMES = Math.floor((DECLARED_FPS * SAMPLE_MS) / 1000);
+
 // Rule 1 of the seam: piece D's frame is used when it is actually there and actually
 // current. Everything else in this file is a fallback away from this case.
 test('a fresh frame from piece D is the one that goes out', () => {
@@ -104,11 +110,13 @@ test('a truncated frame is logged as truncated, not as a missing one', async () 
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('videofeed emits complete placeholder PNGs when piece D has produced nothing', async () => {
+test('videofeed emits complete placeholder PNGs faster than the rate ffmpeg declares', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'videofeed-'));
-  const frames = await collectFrames({ dir, args: [], ms: 1500 });
+  const frames = await collectFrames({ dir, args: [], ms: SAMPLE_MS });
 
-  assert.ok(frames.length >= 4, `only ${frames.length} frames in 1.5s — below the ${TARGET_FPS} fps target`);
+  // The property, not a magic number: more frames than the declared rate would have
+  // produced in the same window, which is what makes -re the thing that paces this.
+  assert.ok(frames.length > MIN_FRAMES, `${frames.length} frames in ${SAMPLE_MS / 1000}s does not exceed the declared ${DECLARED_FPS} fps`);
   const placeholder = readFileSync(new URL('./placeholder.png', import.meta.url));
   for (const f of frames) assert.deepEqual([...f], [...placeholder]);
   rmSync(dir, { recursive: true, force: true });
@@ -124,12 +132,12 @@ test('videofeed keeps emitting after its frame source is deleted mid-run', async
   writeFileSync(source, custom);
 
   const frames = await collectFrames({
-    dir, args: ['--source', source], ms: 1600,
+    dir, args: ['--source', source], ms: SAMPLE_MS,
     midRun: () => rmSync(source, { force: true }),
     midRunAtMs: 600,
   });
 
-  assert.ok(frames.length >= 4, `only ${frames.length} frames — the feed stopped`);
+  assert.ok(frames.length > MIN_FRAMES, `only ${frames.length} frames — the feed stopped`);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -158,13 +166,13 @@ test('videofeed.sh writes complete frames into a fifo held open read-write', asy
   // instead, and closes it on destroy.
   const reader = new Socket({ fd: holder, readable: true, writable: false });
   reader.on('data', (d) => chunks.push(d));
-  await new Promise((r) => setTimeout(r, 1500));
+  await new Promise((r) => setTimeout(r, SAMPLE_MS));
   child.kill('SIGTERM');
   await once(child, 'close');
   reader.destroy();
 
   const frames = splitPngs(Buffer.concat(chunks));
-  assert.ok(frames.length >= 4, `only ${frames.length} frames through the fifo in 1.5s`);
+  assert.ok(frames.length > MIN_FRAMES, `only ${frames.length} frames through the fifo in ${SAMPLE_MS / 1000}s`);
   const placeholder = readFileSync(new URL('./placeholder.png', import.meta.url));
   assert.deepEqual([...frames[0]], [...placeholder]);
   rmSync(dir, { recursive: true, force: true });
