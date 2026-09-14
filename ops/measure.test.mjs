@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  parseEbur128Summary, assessLevels, LOUDNESS_BAND_LUFS, MAX_TRUE_PEAK_DBFS,
+  parseEbur128Summary, assessLevels, LOUDNESS_BAND_LUFS, MAX_TRUE_PEAK_DBFS, SOURCE_LEVELS,
   parseProgressRecords, intervalSpeeds, assessStarvation, startupOffsetSeconds,
   STARVATION_FLOOR, skewFromPackets, assessAvSkew, GOP_SECONDS, FORBIDDEN_FILTERS,
   assessFeederOutage,
@@ -62,6 +62,19 @@ test('loudness outside the band fails in both directions', () => {
 
 test('a missing measurement is not a passing one', () => {
   assert.equal(assessLevels(null).ok, false);
+});
+
+// The spec measured the SOURCE PCM at -20.0 LUFS day / -19.7 night, true peak -4.3
+// dBFS. What tier 0 measures is the same signal after asplit, so the two should agree:
+// a gap means the graph is not passing samples through unaltered, which is the whole
+// thing ebur128-off-an-asplit is there to demonstrate.
+test('the report states how far the encoded run sits from the recorded source levels', () => {
+  const verdict = assessLevels({ integratedLufs: -19.9, truePeakDbfs: -4.3 });
+
+  assert.deepEqual(SOURCE_LEVELS, { integratedLufs: -20.0, truePeakDbfs: -4.3 });
+  assert.ok(Math.abs(verdict.integratedDeltaLu - 0.1) < 1e-9, `delta was ${verdict.integratedDeltaLu}`);
+  assert.equal(verdict.truePeakDeltaDb, 0);
+  assert.match(verdict.reason, /source/);
 });
 
 // Captured verbatim from the same run. ffmpeg 8.0 emits these \r-separated on one

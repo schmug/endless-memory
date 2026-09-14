@@ -22,6 +22,12 @@ export const FORBIDDEN_FILTERS = ['loudnorm', 'alimiter', 'acompressor', 'aresam
 export const LOUDNESS_BAND_LUFS = [-22, -18];
 export const MAX_TRUE_PEAK_DBFS = -1;
 
+// What the spec measured on the SOURCE PCM, five minutes at the day anchor, 2026-09-13.
+// Tier 0 measures the same signal after asplit, so the two should agree: a gap means the
+// filter graph is not passing samples through unaltered, which is precisely what hanging
+// ebur128 off an asplit into anullsink is there to guarantee.
+export const SOURCE_LEVELS = { integratedLufs: -20.0, truePeakDbfs: -4.3 };
+
 // ebur128 prints its summary ONCE, at the end of a run, and at AV_LOG_INFO. The spec's
 // production `-loglevel warning` suppresses it, so a 24/7 stream produces no loudness
 // figure at all — see ops/README.md. Returning null rather than zeroes is what keeps a
@@ -52,9 +58,15 @@ export function assessLevels(levels) {
     // cannot exceed full scale by construction, so a peak this high is a renderer bug.
     problems.push(`true peak ${levels.truePeakDbfs.toFixed(1)} dBFS is above ${MAX_TRUE_PEAK_DBFS} dBTP — investigate the renderer, do not add a limiter`);
   }
+  const integratedDeltaLu = levels.integratedLufs - SOURCE_LEVELS.integratedLufs;
+  const truePeakDeltaDb = levels.truePeakDbfs - SOURCE_LEVELS.truePeakDbfs;
+  const against = `source recorded ${SOURCE_LEVELS.integratedLufs.toFixed(1)} LUFS / ${SOURCE_LEVELS.truePeakDbfs.toFixed(1)} dBFS, so ${integratedDeltaLu >= 0 ? '+' : ''}${integratedDeltaLu.toFixed(1)} LU and ${truePeakDeltaDb >= 0 ? '+' : ''}${truePeakDeltaDb.toFixed(1)} dB`;
   return problems.length
-    ? { ok: false, reason: problems.join('; '), ...levels }
-    : { ok: true, reason: `integrated ${levels.integratedLufs.toFixed(1)} LUFS${Number.isFinite(levels.lra) ? `, LRA ${levels.lra.toFixed(1)} LU` : ''}, true peak ${levels.truePeakDbfs.toFixed(1)} dBFS`, ...levels };
+    ? { ok: false, reason: problems.join('; '), integratedDeltaLu, truePeakDeltaDb, ...levels }
+    : {
+      ok: true, integratedDeltaLu, truePeakDeltaDb, ...levels,
+      reason: `integrated ${levels.integratedLufs.toFixed(1)} LUFS${Number.isFinite(levels.lra) ? `, LRA ${levels.lra.toFixed(1)} LU` : ''}, true peak ${levels.truePeakDbfs.toFixed(1)} dBFS — ${against}`,
+    };
 }
 
 // ---------------------------------------------------------------------------

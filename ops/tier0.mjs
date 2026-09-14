@@ -274,6 +274,9 @@ export async function tier0({
     avSkew: assessAvSkew({ startSkew, endSkew }),
     feederKill: assessFeederKill({
       killedAtSeconds: feederKilledAt,
+      // The container duration is the audio end here, not a proxy for it: -shortest
+      // stops ffmpeg when the first stream ends, so whichever of the two stops first
+      // is what the file's last packet reports.
       audioEndSeconds: durationSeconds,
       targetSeconds: seconds,
       framesResumed: feederRestartedAt !== null && durationSeconds > feederRestartedAt,
