@@ -142,3 +142,35 @@ test('a double quote injected into an embedded function reaches the generated so
     'the injected double quote never reached the export: the generated source no longer carries the embedded functions verbatim, so the scan above has nothing it could catch',
   );
 });
+
+// The generated runtime carries no voice labels: it decides which haps receive
+// weather drift by comparing gain against the chords' (station.mjs:44). That
+// discriminates only while every voice's gain is distinct, and that precondition
+// was a comment on gainSource() rather than a gate. Patching the bass onto the
+// chords' .14 is the collision the comment warns about — the bass would take a
+// cutoff sweep it was never meant to have and a fourfold longer release, while
+// the export still parses and composer.test.mjs's structural bounds stay green.
+// The export has to refuse instead, naming both voices.
+test('two voices sharing a gain fails the export', async () => {
+  const fixture = FIXTURES.find((f) => f.name === 'quiet-afternoon');
+  await assert.rejects(
+    exportFixture(fixture, {
+      patchComposer: (source) => {
+        const parts = source.split('gain: .26');
+        assert.equal(parts.length, 2, 'expected exactly one `gain: .26` in VOICES (the bass voice)');
+        return parts.join('gain: .14');
+      },
+    }),
+    (err) => {
+      assert.ok(
+        err.stderr !== undefined,
+        `the export did not fail inside the spawned CLI, so this proves nothing about the guard: ${err.message}`,
+      );
+      const stderr = String(err.stderr);
+      assert.match(stderr, /chords/, `the failure did not name the chords voice: ${stderr}`);
+      assert.match(stderr, /bass/, `the failure did not name the bass voice: ${stderr}`);
+      return true;
+    },
+    'the export succeeded with bass and chords both at gain .14: a gain collision still reaches the generated source with nothing failing',
+  );
+});
