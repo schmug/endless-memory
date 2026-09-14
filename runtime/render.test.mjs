@@ -6,7 +6,7 @@ import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
-import { BARS, VOICES } from '../composer.mjs';
+import { BARS, VOICES, scene } from '../composer.mjs';
 import { sampleAt, CYCLE_SECONDS } from './voices.mjs';
 import { renderChunk, toPcm, isSilent, run, PRE_ROLL_CYCLES, REPORT_EVERY_CHUNKS } from './render.mjs';
 import { pcmHash, GOLDEN } from './update-golden.mjs';
@@ -71,6 +71,62 @@ test('chunked rendering is bit-identical across a scene boundary', () => {
   const onePass = renderChunk(start, 12, QUIET);
   for (const size of [3, 4, 8]) {
     assertIdentical(chunked(start, 12, size, QUIET), onePass, `scene boundary chunk size ${size}`);
+  }
+});
+
+// The scene-boundary test above crosses 216812 -> 216813, where both scenes carry
+// motif m7050732 and weather clear: a boundary at which nothing the listener would
+// notice changes. The two parameterised spans cross no boundary at all — span 16 from
+// a multiple of BARS (32) stays inside one scene. So the spec's acceptance criterion
+// 3b (chunk-invariance "across ... motif handoffs and weather changes") had no test
+// behind it until the two below. Both pin an index and then assert the property that
+// index is chosen for, so neither can silently decay into another flat boundary if
+// the score model shifts.
+
+test('chunked rendering is bit-identical across a motif handoff', () => {
+  // 216385 -> 216386 hands off m90395206 -> m8329137 with weather rain on both sides,
+  // which isolates the motif change. This is the path PRE_ROLL_CYCLES makes
+  // interesting: each chunk pulls the two preceding cycles, so a chunk starting just
+  // after the boundary reaches back into a scene whose pattern content is genuinely
+  // different — different degrees, and a transitioning melody blending the old motif.
+  const index = 216386;
+  assert.notEqual(scene(index, WEATHERED).motif, scene(index - 1, WEATHERED).motif,
+    `scene ${index} must hand off to a new motif for this test to mean anything`);
+
+  // start = boundary - 4 puts a size-4 chunk edge exactly on the scene edge, as the
+  // scene-boundary test above does.
+  // Of the sizes below only 2 and 4 divide the 4-cycle lead-in, so only those put a
+  // chunk EDGE on the scene boundary — which is the property under test. 3 and 8 land
+  // at [-1, 2, 5] and [4] and merely contain the boundary inside a chunk, a case
+  // one-pass satisfies trivially; they are kept as the weaker surrounding coverage.
+  const start = index * BARS - 4;
+  const onePass = renderChunk(start, 12, WEATHERED);
+  for (const size of [2, 3, 4, 8]) {
+    assertIdentical(chunked(start, 12, size, WEATHERED), onePass, `motif handoff chunk size ${size}`);
+  }
+});
+
+test('chunked rendering is bit-identical across a weather change', () => {
+  // 216101 -> 216102 is where WEATHERED's rain observation first takes effect. What
+  // the renderer actually hears is atmosphere()'s target switching at that bar: the
+  // chords cutoff drifts about -2.8 Hz/bar before it and about -10.9 Hz/bar after.
+  // Drift is sampled per event onset, so a chunk edge landing on that switch is the
+  // case worth pinning.
+  //
+  // The motif necessarily moves here too — identity() seeds the born motif with the
+  // active weather event's id, so no weather change in this model leaves the motif
+  // alone. That is not a mis-targeted index; the weather path under test is
+  // atmosphere(), which reads only the bar and the journal.
+  const index = 216102;
+  assert.notEqual(scene(index, WEATHERED).weather, scene(index - 1, WEATHERED).weather,
+    `scene ${index} must change weather for this test to mean anything`);
+
+  // Sizes 2 and 4 put a chunk edge on the boundary; 3 and 8 only straddle it. See the
+  // motif-handoff test above.
+  const start = index * BARS - 4;
+  const onePass = renderChunk(start, 12, WEATHERED);
+  for (const size of [2, 3, 4, 8]) {
+    assertIdentical(chunked(start, 12, size, WEATHERED), onePass, `weather change chunk size ${size}`);
   }
 });
 
