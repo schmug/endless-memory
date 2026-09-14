@@ -525,11 +525,14 @@ attached — to the production input, which by then has never carried a test fra
 
 ## Open questions
 
-1. **Which always-on host.** Owner decision. Criteria: Linux, 2 vCPU, 1 GB RAM, ≥ 500
-   GB/month egress, stable upstream, and uptime that is somebody's job. Recommendation: a
-   small VPS rather than a machine at home, because a home upstream and its power are the
-   station's availability floor and neither is monitored. This is the one decision that
-   blocks implementation.
+1. ~~**Which always-on host.**~~ **DECIDED 2026-09-14: a small VPS.** The criteria stand
+   as the shopping list — Linux, 2 vCPU, 1 GB RAM, ≥ 500 GB/month egress, stable upstream,
+   and uptime that is somebody's job — and the reasoning that carried it was that a home
+   upstream and its power are the station's availability floor and neither is monitored.
+   Budget context: roughly $5–10/month for the box, on top of the ~$43/month Cloudflare
+   estimate below (hard cap $75). The specific provider and instance are not chosen yet,
+   but that is a purchase, not a design question. **Implementation is no longer blocked on
+   this.**
 2. **Alert channel.** Default is Cloudflare notifications to email. A push channel is
    better at 3am and needs an owner decision about what is worth waking up for.
 3. **Does Cloudflare re-encode the simulcast, or pass the source through?** Unverified as
