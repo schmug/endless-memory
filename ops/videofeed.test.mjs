@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { once } from 'node:events';
-import { chooseFrame, isCompletePng, MAX_FRAME_AGE_MS, TARGET_FPS, DECLARED_FPS } from './videofeed.mjs';
+import { chooseFrame, isCompletePng, feed, MAX_FRAME_AGE_MS, TARGET_FPS, DECLARED_FPS } from './videofeed.mjs';
 
 const FRESH = { mtimeMs: 1000, size: 4084 };
 
@@ -80,6 +80,28 @@ test('the declared framerate matches the one ops/stream.sh hands ffmpeg', () => 
   }).trim().split('\n');
 
   assert.equal(args[args.indexOf('-framerate') + 1], String(DECLARED_FPS));
+});
+
+// journald is where this gets diagnosed at 3am. "no frame from piece D" and "piece D is
+// writing frames I cannot use" call for different things — restart piece D, or go and
+// look at what it is writing — so the truncated case must not be logged as the missing
+// one.
+test('a truncated frame is logged as truncated, not as a missing one', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'videofeed-trunc-'));
+  const source = join(dir, 'current.png');
+  const placeholder = readFileSync(new URL('./placeholder.png', import.meta.url));
+  writeFileSync(source, placeholder.subarray(0, placeholder.length - 4));
+
+  const reasons = [];
+  const originalError = console.error;
+  console.error = (line) => reasons.push(line);
+  try {
+    await feed({ sourcePath: source, placeholder, out: { write: () => true }, frames: 1, fps: 1000 });
+  } finally { console.error = originalError; }
+
+  assert.match(reasons.join('\n'), /truncated|incomplete/i, `logged instead: ${reasons.join(' | ')}`);
+  assert.doesNotMatch(reasons.join('\n'), /no frame from piece D/);
+  rmSync(dir, { recursive: true, force: true });
 });
 
 test('videofeed emits complete placeholder PNGs when piece D has produced nothing', async () => {

@@ -77,8 +77,11 @@ export async function feed({ sourcePath, placeholder, out, fps = TARGET_FPS, max
         frame = bytes;
       } else {
         // Fall through exactly as a stale frame would: a half-written PNG is not a
-        // reason to stop, only a reason not to send this one.
-        ({ use, reason } = chooseFrame({ source: null, hasLastGood: lastGood !== null, nowMs: started, maxAgeMs }));
+        // reason to stop, only a reason not to send this one. The reason is rewritten
+        // rather than reused from chooseFrame, because "piece D is writing frames I
+        // cannot use" and "piece D is gone" call for different things at 3am.
+        use = lastGood !== null ? 'last-good' : 'placeholder';
+        reason = `piece D frame is truncated or not a PNG; ${use === 'last-good' ? 'holding the last good frame' : 'no frame held, falling back to the placeholder'}`;
       }
     }
     if (frame === null) frame = use === 'last-good' ? lastGood : placeholder;
