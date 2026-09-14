@@ -540,8 +540,15 @@ attached — to the production input, which by then has never carried a test fra
    actually receives. Answerable by observation during tier 2: compare the YouTube
    player's reported resolution, frame rate and bitrate against what ffmpeg sent.
 4. **The YouTube channel itself** — which account, and whether the stream is ever
-   monetized. Not a technical blocker for E, but #38's webcam-rights question depends on
-   the answer.
+   monetized. Not a technical blocker for E. ~~#38's webcam-rights question depends on the
+   answer.~~ **Corrected 2026-09-14:** it does not, for the source #38 now recommends. The
+   NPS Boston Light cameras are a US Government work and therefore public domain; NPS
+   permits commercial republication, requiring only a notice that no protection is claimed
+   in US Government works (17 U.S.C. § 403). So monetization does not change what that
+   source permits. What DOES bind, regardless of monetization, is the trademark carve-out:
+   the NPS Arrowhead, the USCG Sector Boston seal and the Hull Lifesaving Museum logo are
+   burned into every frame and must be cropped before broadcast. See #38 for the full
+   finding. The channel choice itself remains genuinely open.
 
 ## Acceptance criteria
 
