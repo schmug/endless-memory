@@ -95,9 +95,13 @@ test('chunked rendering is bit-identical across a motif handoff', () => {
 
   // start = boundary - 4 puts a size-4 chunk edge exactly on the scene edge, as the
   // scene-boundary test above does.
+  // Of the sizes below only 2 and 4 divide the 4-cycle lead-in, so only those put a
+  // chunk EDGE on the scene boundary — which is the property under test. 3 and 8 land
+  // at [-1, 2, 5] and [4] and merely contain the boundary inside a chunk, a case
+  // one-pass satisfies trivially; they are kept as the weaker surrounding coverage.
   const start = index * BARS - 4;
   const onePass = renderChunk(start, 12, WEATHERED);
-  for (const size of [3, 4, 8]) {
+  for (const size of [2, 3, 4, 8]) {
     assertIdentical(chunked(start, 12, size, WEATHERED), onePass, `motif handoff chunk size ${size}`);
   }
 });
@@ -117,9 +121,11 @@ test('chunked rendering is bit-identical across a weather change', () => {
   assert.notEqual(scene(index, WEATHERED).weather, scene(index - 1, WEATHERED).weather,
     `scene ${index} must change weather for this test to mean anything`);
 
+  // Sizes 2 and 4 put a chunk edge on the boundary; 3 and 8 only straddle it. See the
+  // motif-handoff test above.
   const start = index * BARS - 4;
   const onePass = renderChunk(start, 12, WEATHERED);
-  for (const size of [3, 4, 8]) {
+  for (const size of [2, 3, 4, 8]) {
     assertIdentical(chunked(start, 12, size, WEATHERED), onePass, `weather change chunk size ${size}`);
   }
 });
