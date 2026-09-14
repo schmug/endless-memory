@@ -282,6 +282,63 @@ renderer, so the process rarely lives long enough for the creep to matter. A run
 that needed to survive weeks untouched would want this re-measured over a longer
 span rather than extrapolated from one day.
 
+### Realtime, measured (#36)
+
+Everything above is a *simulated* day: `endurance.mjs` consumes chunks as fast as
+they are produced, at 109x. This section records the first run at 1x, through the
+pipe the design assumes at line 201 but had never exercised. Measured 2026-09-13,
+Node v22.22.3 on macOS (Darwin 25.6.0), ffmpeg 8.0, via `npm run realtime --hours 3`
+— `render.mjs --out -` piped into `ffmpeg -re`, encoding FLAC to a local file. The
+renderer is spawned as a process, not imported, so the CLI and its fd-1 stdout
+handling are part of what is under test.
+
+```
+realtime: 3 h target, anchor 2026-09-11T12:00:00Z, chunk 8 cycles
+  produced 3.000 h of audio in 3.000 h wall — final speed 1.000x
+  drift: +0.34s vs realtime, bound ±25.60s (one 8-cycle chunk + a 64 KiB pipe)
+  silence: no silent stretches
+  output: 320.2 MB
+  render: 3420 cycles total, peak 0.7337, 0 clipped sample(s) over the whole run
+  phase  span (h)        samples   median RSS    min RSS     max RSS
+      1   0.00–0.37        134     104.8 MB    62.4 MB    132.7 MB (warm-up)
+      2   0.37–0.75        135     114.3 MB    95.7 MB    134.5 MB
+      3   0.75–1.12        135     116.0 MB    97.4 MB    134.6 MB
+      4   1.12–1.50        135     116.0 MB    97.5 MB    134.6 MB
+      5   1.50–1.87        135     116.0 MB    97.5 MB    134.6 MB
+      6   1.87–2.25        135     116.0 MB    97.5 MB    134.6 MB
+      7   2.25–2.62        135     116.1 MB    92.9 MB    134.6 MB
+      8   2.62–3.00        135     116.1 MB    97.5 MB    134.6 MB
+  post-warm-up RSS slope: 0.519 MB/h (12.5 MB/day)
+  (whole-run RSS slope, warm-up included: 2.783 MB/h (66.8 MB/day) — contrast)
+  verdict: PASS
+```
+
+**Backpressure engages.** Final speed 1.000x and drift +0.34s against a ±25.60s
+bound. That bound is derived, not chosen: `ffmpeg -re` consumes at 1x, so the
+renderer blocks once the pipe fills and the gap between produced and consumed audio
+is exactly what is in flight — one 8-cycle chunk plus a 64 KiB pipe. The measured
+0.34s sits two orders of magnitude inside it, so the renderer is spending nearly all
+its time blocked on the pipe rather than buffering ahead. The assumption at line 201
+holds.
+
+**RSS is 12.5 MB/day post-warm-up, against 7.3 MB/day simulated.** Both are inside
+the 48 MB/day budget. The two are not directly comparable — different machine, and a
+day of simulated time here is 8 hours of wall clock rather than 13 minutes, so the
+allocator sees the same 3420 chunks spread over a very different span. The phase
+medians are the thing to read: phases 3–8 sit at 116.0–116.1 MB, flat to within
+0.1 MB over 2.25 hours. The whole-run figure of 66.8 MB/day is the same warm-up
+artefact documented above, reported only for contrast.
+
+**Zero silent stretches**, measured on the finished FLAC with ffmpeg's
+`silencedetect` at -50 dBFS / 1s, independently of `render.mjs`'s own guard — which
+throws on the first silent chunk and so can only ever report zero or nothing at all.
+Peak 0.7337 with 0 clipped samples over 3420 cycles.
+
+**What this does not establish.** One run, one machine, three hours, a local file
+sink rather than RTMPS to a remote endpoint. Network backpressure is not pipe
+backpressure, and a 3-hour clean run says nothing about week three. Piece E's spec
+re-runs this on the production host as its own acceptance criterion.
+
 ## Deployment context (not this spec's work)
 
 Decided 2026-09-11: the renderer runs on an always-on host and pushes RTMPS into a

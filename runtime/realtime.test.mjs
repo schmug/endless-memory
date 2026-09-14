@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseProgress, driftTolerance, assessDrift, parseSilence, assessSilence, assessRssSlope, BYTES_PER_SAMPLE } from './realtime.mjs';
+import { parseProgress, driftTolerance, assessDrift, parseSilence, assessSilence, assessRssSlope, logSchedule, BYTES_PER_SAMPLE } from './realtime.mjs';
 import { SR, CYCLE_SECONDS } from './voices.mjs';
 
 // Captured verbatim from ffmpeg 8.0 driving this repo's renderer, 2026-09-13. The
@@ -122,4 +122,30 @@ test('an unfittable slope is not reported as a pass', () => {
   const verdict = assessRssSlope({ slopeBytesPerHour: NaN, wallSeconds: 3 * 3600 });
 
   assert.equal(verdict.assessed, false);
+});
+
+// setInterval drifts. Sampling every 10s, elapsed seconds land on 3301 rather than
+// 3300 once cumulative drift passes half a second — and a progress line gated on an
+// exact multiple then never prints again. The real 3-hour run on 2026-09-13 went
+// silent after 55 minutes for exactly this reason, which is the failure mode the
+// progress line exists to rule out.
+test('progress logging survives timer drift instead of going silent', () => {
+  const due = logSchedule(300);
+  // Elapsed times as they actually arrived: 10s apart, drifting a few ms each tick.
+  const logged = [];
+  for (let i = 1; i <= 380; i++) {
+    const elapsed = i * 10 + i * 0.004;
+    if (due(elapsed)) logged.push(Math.round(elapsed));
+  }
+
+  // 3800s of run at 300s intervals: 12 lines, and crucially the later ones exist.
+  assert.equal(logged.length, 12);
+  assert.ok(logged[11] > 3500, `logging stopped early at ${logged[11]}s`);
+});
+
+test('logSchedule does not fire twice inside one interval', () => {
+  const due = logSchedule(300);
+  assert.equal(due(300), true);
+  assert.equal(due(305), false);
+  assert.equal(due(600), true);
 });

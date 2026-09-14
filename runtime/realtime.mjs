@@ -235,6 +235,21 @@ export function assessRssSlope({ slopeBytesPerHour, wallSeconds }) {
   };
 }
 
+// A progress gate that advances past whatever time actually arrived, rather than
+// matching an exact multiple. setInterval drifts, so samples land at 3301s instead
+// of 3300s and an equality test then never fires again — observed silencing the
+// 2026-09-13 three-hour run's progress output after 55 minutes.
+export function logSchedule(everySeconds) {
+  let next = everySeconds;
+  return (elapsedSeconds) => {
+    if (elapsedSeconds < next) return false;
+    // Advance past the elapsed time, so a long stall skips missed marks rather
+    // than emitting a burst of backdated lines.
+    next = (Math.floor(elapsedSeconds / everySeconds) + 1) * everySeconds;
+    return true;
+  };
+}
+
 export function formatRealtimeReport(r) {
   const lines = [];
   lines.push(`realtime: ${r.hours} h target, anchor ${r.anchor}, chunk ${r.chunkCycles} cycles`);
@@ -266,6 +281,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     return i === -1 ? fallback : process.argv[i + 1];
   };
   const hours = Number(arg('hours', 3));
+  const logDue = logSchedule(300);
   const out = arg('out', undefined);
   const result = await realtime({
     hours,
@@ -275,7 +291,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     // Progress to stderr as it goes: a 3-hour run with no output for 3 hours is
     // indistinguishable from a hang.
     onSample: (s, p) => {
-      if (Math.round(s.hours * 3600) % 300 !== 0) return;
+      if (!logDue(s.hours * 3600)) return;
       process.stderr.write(`  [${(s.hours * 60).toFixed(1)} min] rss ${fmtMb(s.rss)}, ffmpeg at ${p ? p.timeSeconds.toFixed(0) : '?'}s, speed ${p ? p.speed.toFixed(2) : '?'}x\n`);
     },
   });
