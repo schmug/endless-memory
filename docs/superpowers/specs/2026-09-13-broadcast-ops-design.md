@@ -1,7 +1,9 @@
 # Broadcast and ops (piece E) — design
 
 Date: 2026-09-13
-Status: specified, not implemented
+Status: tier 0 implemented 2026-09-14 (`ops/`, `npm run tier0`); tiers 1-3 unbuilt,
+and blocked on a host that does not exist yet. See "Tier 0, measured" below —
+it corrects three things in this document.
 
 ## Problem
 
@@ -505,6 +507,87 @@ end-to-end acceptance test, and the only tier where YouTube is involved at all.
 
 Only after tier 2 passes does a Live Output pointed at the public destination get
 attached — to the production input, which by then has never carried a test frame.
+
+## Tier 0, measured — 2026-09-14
+
+Implemented in `ops/`; see `ops/README.md` for the runbook. Everything below was
+measured on a dev machine against ffmpeg 8.0 and a local file sink. **This is not
+criterion 2**, which asks for an hour on the production host; it is the flag validation
+tier 0 exists to provide.
+
+Three things in this document turned out to be wrong or incomplete. They are corrected
+here rather than edited in place above, so the change is visible.
+
+### `-shortest` is required, and was missing
+
+"The renderer and ffmpeg are one unit... if the renderer exits, ffmpeg sees EOF" is true
+of the audio input and false of the pipeline. The **video** input is infinite, so ffmpeg
+does not exit when the renderer dies. Measured: renderer `kill -9`'d 25 s into a run,
+ffmpeg still encoding silent video 60 s later with no sign of stopping. The pipeline
+never exits, so `pipefail` never fires and `Restart=always` never fires — systemd holds a
+green unit over permanent dead air. With `-shortest`, the same kill ended the pipeline in
+2 s. `-shortest` alters no samples; it decides when ffmpeg stops, not what it encodes.
+
+### `speed` is cumulative, and would fire the dead-air alert on every restart
+
+ffmpeg takes a fixed ~8 s to bring the `image2pipe` input up (the renderer is not the
+cause: a cold `render.mjs` produces its first 8-cycle chunk in 0.18 s, and no audio is
+lost because the renderer blocks on a full pipe). The printed `speed=` is cumulative, so
+that offset reads as 0.13x at 10 s, 0.79x at 40 s and 0.94x at two minutes on a run
+pacing at exactly 1.000x throughout.
+
+The monitoring table's "`speed` outside 0.97–1.03 for 2 minutes" would therefore alert on
+every restart, which is every journal change. The signal has to be the **interval** speed
+between consecutive progress records (`ops/measure.mjs`'s `intervalSpeeds()`).
+
+### The in-graph `ebur128` yields no continuous loudness signal
+
+`ebur128` prints its Summary **once, at the end of a run**, at `AV_LOG_INFO` — and a
+24/7 stream has no end. `-loglevel warning` suppresses the block entirely, and
+`framelog=verbose` means "log at `AV_LOG_VERBOSE`", one level *below* info, so the
+per-frame lines are suppressed too. The monitoring table's "integrated loudness |
+in-graph `ebur128`" row is currently unobtainable. Unresolved; `ametadata=print` at a
+sane interval is the untried candidate.
+
+### The failure this design had no answer for: a wedge
+
+31 minutes into a 60-minute run, 90 s after the video feeder was SIGKILLed and restarted,
+ffmpeg's output clock froze at 1791 s and never moved again. Every ffmpeg thread — both
+demuxers, the filter chain, both encoders, the muxer — sat in `__psynch_cvwait`; nothing
+was blocked on a pipe read, the feeder was writing normally, and ffmpeg had consumed
+everything it wrote. RSS crept 350.3 → 352.2 MB behind the wedge. Every process stayed
+alive, so nothing exited and none of `pipefail`, `-shortest` or `Restart=always` fired.
+
+This reorders the monitoring design. Host-local signals are described above as "a
+refinement of *why*, after the Worker has already answered *whether*". Against a wedge
+the off-host Worker is the **only** thing that answers *whether*, because every
+host-local liveness check reports a healthy unit. A host-local check on **output
+progress** — ffmpeg's `time=` advancing, renderer lines arriving — does catch it, and is
+the cheap addition this finding argues for.
+
+The cause is not identified and the wedge is not deterministic: 2-minute and 6-minute runs
+with the same feeder kill both recovered. Candidates are `-shortest` and the `fps=30` /
+`-re` handling of a gap in frame arrivals. `npm run tier0` now ends and fails a wedged run
+rather than hanging on it.
+
+### Figures
+
+From the 6-minute run, feeder killed at 120 s (`npm run tier0 -- --minutes 6
+--kill-feeder-at 120`):
+
+| measure | result |
+|---|---|
+| tracks | h264 1280x720 + aac 48000 Hz 2ch, one ffmpeg invocation |
+| drift | −10.45 s against the ±25.60 s bound `driftTolerance()` derives |
+| startup offset | 8.77 s, one-time |
+| pacing | 33 intervals past warm-up, slowest 0.999x, floor 0.97 |
+| A/V skew | +0.047 s at the start, −0.012 s at the end; grew −0.059 s |
+| levels | −19.9 LUFS, LRA 1.0 LU, true peak −4.3 dBFS (source: −20.0 / −4.3) |
+| silence | none |
+| feeder kill | audio ran on to 360.1 s; outage dipped pacing to 0.822x, recovered by 140 s |
+
+Levels agree with the source figures recorded above, which is the evidence that the
+`asplit` leg reaching the encoder is unaltered.
 
 ## Constraints
 
