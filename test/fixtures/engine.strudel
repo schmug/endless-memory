@@ -1,8 +1,8 @@
 // Endless Memory v3 — synthesized sounds only. Paste into Strudel and play.
-// Score anchor: 2026-09-11T02:00:00Z. UTC day phases. Replay starts here, not at the current clock.
+// Score anchor: {{ANCHOR}}. UTC day phases. Replay starts here, not at the current clock.
 setcps(76/60/4)
 const BPM=76, BARS=32, BAR_MS=3157.8947368421054, EPOCH=1767225600000;
-const journal={'version':1,'seed':'window-seat-v1','events':[{'id':'fixture-remember-1','at':'2026-09-09T12:00:00Z','type':'remember','motif':'m8329137'},{'id':'fixture-weather-1','at':'2026-09-10T18:00:00Z','type':'weather','value':'rain'}]};
+const journal={{JOURNAL}};
 function hash(value) {
   let h = 2166136261;
   for (const c of String(value)) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
@@ -82,7 +82,7 @@ function scene(index, journal) {
     chords:wrap(chords), bass:wrap(bass), melody:wrap(melody), hats:wrap(hats), kicks:wrap(kicks), snares:wrap(snares)};
 }
 const cache=new Map();
-const startBar=6924360;
+const startBar={{START_BAR}};
 const music=new Pattern(state=>{
  const begin=Number(state.span.begin), end=Number(state.span.end);
  const haps=[];

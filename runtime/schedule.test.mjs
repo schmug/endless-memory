@@ -1,17 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import * as core from '@strudel/core';
 import { mini } from '@strudel/mini';
 import { transpiler } from '@strudel/transpiler';
 import { EPOCH, BAR_MS, BARS } from '../composer.mjs';
+import { readFixture } from '../test/update-fixtures.mjs';
 import { eventsForCycles, build } from './schedule.mjs';
 
 core.setStringParser(core.pure);
 
-// Build the same pattern the browser would run, from a committed fixture.
+// Build the same pattern the browser would run, from a committed fixture. The
+// fixtures are two layers since issue #3 — a shared engine snapshot plus a small
+// per-anchor file — so the source comes back through readFixture() rather than
+// off disk in one piece. What it hands back is still the committed bytes:
+// export.test.mjs asserts the reassembled source is byte-identical to the export.
 function strudelPattern(fixture) {
-  const source = readFileSync(new URL(`../test/fixtures/${fixture}.strudel`, import.meta.url), 'utf8');
+  const source = readFixture(fixture).strudel;
   const names = ['Pattern', 'stack', 'note', 's'];
   const { output } = transpiler(source, { wrapAsync: false, addReturn: true });
   return new Function(...names, 'setcps', 'mini', output)(...names.map((n) => core[n]), () => {}, mini);
@@ -19,7 +23,7 @@ function strudelPattern(fixture) {
 
 // The fixture's own anchor, in cycles, so our absolute cycles line up with its timeline.
 function anchorCycle(fixture) {
-  const source = readFileSync(new URL(`../test/fixtures/${fixture}.strudel`, import.meta.url), 'utf8');
+  const source = readFixture(fixture).strudel;
   const at = source.match(/Score anchor: (\S+)\./)[1];
   return Math.floor((Date.parse(at) - EPOCH) / BAR_MS);
 }

@@ -101,7 +101,17 @@ the matrix is ever needed.
   `npm run endurance`.
 - `journal.json` — append-only event log. Events take effect at the next scene
   boundary (32 bars, about 101 seconds).
-- `test/fixtures/` — pinned exports. `test/update-fixtures.mjs` regenerates them.
+- `test/fixtures/` — pinned exports in two layers (#3). `engine.strudel` is the
+  shared engine snapshot, with `{{ANCHOR}}`, `{{JOURNAL}}` and `{{START_BAR}}`
+  standing in for the three values that vary per anchor; each `<name>.json` pins
+  that anchor's text for those three plus its 45-minute score. `export.test.mjs`
+  reassembles the two and still asserts byte equality against what the exporter
+  writes, which only means anything while reassembly stays pure text
+  substitution — a reassembly that derived a value would drift in step with the
+  engine and compare two moving things. `test/update-fixtures.mjs` regenerates
+  both layers; an argument writes them somewhere else
+  (`node test/update-fixtures.mjs /tmp/out`), which is how a regeneration gets
+  checked against what is committed without overwriting it.
 - `research/` — raw NWS and CO-OPS pulls. `KBOS-observations.json` and
   `KBVY-observations.json` are point-in-time snapshots that cannot be re-fetched.
 - `docs/superpowers/` — the spec and plan this repo was built from.
