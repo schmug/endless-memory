@@ -13,6 +13,10 @@ export const sceneIndexForCycle = (cycle) => Math.floor(cycle / BARS);
 // VOICES table only ever emits 'lpf'/'hpf').
 export function build(voice, parsed, sceneData, drift) {
   const evt = {
+    // The voice's name, carried through so voices.mjs can seed noise per voice. Both
+    // white-noise voices are triggers with no freq of their own, so without this a snare
+    // and a hat on the same onset seeded identically (#11).
+    voice: voice.field,
     wave: voice.wave,
     attack: voice.attack,
     decay: voice.decay,
