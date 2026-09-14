@@ -1,0 +1,38 @@
+# The frame writer. Install to /etc/systemd/system/.
+#
+# Deliberately INDEPENDENT of endless-memory-stream.service: no BindsTo, no Requires, no
+# PartOf. ops/stream.sh holds the fifo open read-write on fd 3, so this unit can crash,
+# restart, or be replaced by one that reads piece D's frames without ffmpeg ever seeing
+# EOF. Any dependency here would put the frame writer back in the broadcast path.
+
+[Unit]
+Description=Endless Memory — write video frames into the broadcast fifo
+
+[Service]
+Type=simple
+User=endless
+Group=endless
+WorkingDirectory=/opt/endless-memory
+
+ExecStart=/bin/bash /opt/endless-memory/ops/videofeed.sh
+
+# Piece D (#38) sets FRAME_SOURCE when it exists. Unset, videofeed emits the
+# placeholder — which is the launch state and must stay a working one.
+Environment=VIDEO_FIFO=/run/endless-memory/video.fifo
+
+Restart=always
+RestartSec=2
+StartLimitIntervalSec=0
+
+RuntimeDirectory=endless-memory
+RuntimeDirectoryPreserve=yes
+RuntimeDirectoryMode=0750
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+
+[Install]
+WantedBy=multi-user.target
