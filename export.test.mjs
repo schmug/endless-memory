@@ -68,3 +68,27 @@ test('the generated source is single-quoted throughout', async () => {
     );
   }
 });
+
+// The assertion above cannot fail today: nothing in the real export contains a
+// double quote, so its failure path never runs and a refactor could reduce it to
+// `assert.ok(true)` with the suite staying green. This is the inverse
+// demonstration. Patching identity()'s weather default from `?? 'clear'` to
+// `?? "clear"` changes no behaviour — the export still succeeds — but the quote
+// lands inside one of the five functions the prelude embeds via `.toString()`,
+// which is the region station.mjs's own single-quote rule does not cover. This
+// tests the generator, not the test above: if the embedded functions ever stop
+// reaching the output verbatim, there is nothing left for that scan to catch.
+test('a double quote injected into an embedded function reaches the generated source', async () => {
+  const fixture = FIXTURES.find((f) => f.name === 'quiet-afternoon');
+  const { strudel } = await exportFixture(fixture, {
+    patchComposer: (source) => {
+      const parts = source.split("?? 'clear';");
+      assert.equal(parts.length, 2, "expected exactly one `?? 'clear';` in composer.mjs (the identity() weather default)");
+      return parts.join('?? "clear";');
+    },
+  });
+  assert.ok(
+    strudel.includes('?? "clear"'),
+    'the injected double quote never reached the export: the generated source no longer carries the embedded functions verbatim, so the scan above has nothing it could catch',
+  );
+});
