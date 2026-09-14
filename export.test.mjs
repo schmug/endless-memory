@@ -49,24 +49,74 @@ test('the chords drift marker follows the chords gain in VOICES', async () => {
   assert.equal(marker[1], '.15', 'drift marker did not follow the chords gain in VOICES; chords lose cutoff and release drift');
 });
 
-// Strudel's transpiler reads double-quoted strings as mini-notation, so a stray
-// `"` anywhere in the export silently changes what the source means. station.mjs
-// applies the single-quote rule as it builds each literal, which covers the
-// journal but not the five composer.mjs functions the prelude embeds via
-// `.toString()`. Those are single-quoted today; this is what keeps them that
-// way, including across a deliberate `npm run fixtures`. (Backticks are
-// mini-notation too, but nothing emits one, so they are not checked here.)
+// Strudel's transpiler reads double-quoted strings and backticks alike as
+// mini-notation, so a stray delimiter anywhere in the export silently changes
+// what the source means. station.mjs applies the single-quote rule as it builds
+// each literal, which covers the journal but not the five composer.mjs
+// functions the prelude embeds via `.toString()`, nor the text voiceSource()
+// (composer.mjs:131-140) returns into the output verbatim. Those are
+// single-quoted today; this is what keeps them that way, including across a
+// deliberate `npm run fixtures`.
+//
+// The backtick half of the scan is deliberately naive. A backtick inside a
+// single-quoted string is only a character to the transpiler, not a delimiter,
+// and jsString (station.mjs:12-13) escapes `\`, `'`, `\n` and `\r` but not
+// backticks — so a journal string carrying one would trip this check with no
+// defect behind it. None does today, and a false positive a maintainer can read
+// beats a span-aware scanner subtle enough to need tests of its own.
+const MINI_NOTATION_DELIMITERS = [
+  { char: '"', label: 'a double quote' },
+  { char: '`', label: 'a backtick' },
+];
+
+// Read-only inspection of already-generated text; nothing here rewrites it.
+// Returns a message naming which delimiter was found and why it is forbidden,
+// or null when the source is clean. Kept separate so the demonstration below
+// runs the real scan rather than restating it.
+function miniNotationDelimiter(name, strudel) {
+  const lines = strudel.split('\n');
+  for (const [index, line] of lines.entries()) {
+    const hit = MINI_NOTATION_DELIMITERS.find(({ char }) => line.includes(char));
+    if (hit) {
+      return `${name} line ${index + 1} contains ${hit.label}, which Strudel's transpiler reads as mini-notation rather than a string: ${JSON.stringify(line.slice(0, 120))}`;
+    }
+  }
+  return null;
+}
+
 test('the generated source is single-quoted throughout', async () => {
   for (const fixture of FIXTURES) {
     const { strudel } = await exportOnce(fixture);
-    const lines = strudel.split('\n');
-    const index = lines.findIndex((line) => line.includes('"'));
-    assert.equal(
-      index,
-      -1,
-      `${fixture.name} line ${index + 1} contains a double quote, which Strudel's transpiler reads as mini-notation rather than a string: ${JSON.stringify(lines[index]?.slice(0, 120))}`,
-    );
+    const found = miniNotationDelimiter(fixture.name, strudel);
+    assert.equal(found, null, found);
   }
+});
+
+// The scan above cannot fail today: the real export carries neither delimiter,
+// so its backtick path never runs against real output. This is the inverse
+// demonstration for that half. voiceSource() (composer.mjs:131-140) is written
+// in template literals and its return value lands in the export verbatim, so
+// emitting a backtick there is a one-character slip inside an existing
+// backtick-delimited string rather than a hypothetical. The patched export
+// still succeeds and still parses; only the scan can tell it apart.
+test('a backtick emitted by voiceSource is reported as mini-notation', async () => {
+  const fixture = FIXTURES.find((f) => f.name === 'quiet-afternoon');
+  const { strudel } = await exportFixture(fixture, {
+    patchComposer: (source) => {
+      const parts = source.split(".s('${voice.wave}')");
+      assert.equal(parts.length, 2, "expected exactly one `.s('${voice.wave}')` in composer.mjs (voiceSource's note branch)");
+      // The replacement lands inside composer.mjs's own template literal, so
+      // the backticks it emits have to be written escaped: `\` + backtick`.
+      return parts.join('.s(\\`${voice.wave}\\`)');
+    },
+  });
+  const found = miniNotationDelimiter(fixture.name, strudel);
+  assert.ok(
+    found,
+    'the scan reported nothing: either the injected backtick never reached the export, or the scan does not look for backticks',
+  );
+  assert.match(found, /a backtick/, `the scan named the wrong delimiter: ${found}`);
+  assert.match(found, /mini-notation/, `the scan did not say why a backtick is forbidden: ${found}`);
 });
 
 // The assertion above cannot fail today: nothing in the real export contains a
