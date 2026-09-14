@@ -1,17 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { FIXTURES, exportFixture, exportOnce } from './test/update-fixtures.mjs';
-
-const dir = dirname(fileURLToPath(import.meta.url));
+import { FIXTURES, LAYERS, exportFixture, exportOnce, readFixture, reassemble, splitExport } from './test/update-fixtures.mjs';
 
 // Characterization tests, not specification. Their job is to make an accidental
 // change to a listener-approved sound impossible to merge unnoticed.
+//
+// Each fixture is two layers now (issue #3): the shared engine snapshot plus a
+// small per-anchor file. readFixture() reassembles them; what is compared here is
+// still the whole source, byte for byte, because whole-file byte identity is the
+// only value-level guard the sound has — composer.test.mjs asserts structural
+// bounds and cannot see a changed number.
 for (const fixture of FIXTURES) {
   test(`export is byte-identical to the ${fixture.name} fixture`, async () => {
-    const expected = await readFile(join(dir, 'test', 'fixtures', `${fixture.name}.strudel`), 'utf8');
+    const expected = readFixture(fixture.name).strudel;
     const { strudel } = await exportOnce(fixture);
     assert.equal(
       strudel,
@@ -19,7 +20,76 @@ for (const fixture of FIXTURES) {
       'Export drifted from the approved sound. If this change is intentional, run `npm run fixtures` and review the diff.',
     );
   });
+
+  // The engine snapshot locks the mix; this locks the music. A changed motif,
+  // handoff or phase shows up here as one readable line naming the scene it
+  // belongs to, which is what the whole reshape was for.
+  test(`the ${fixture.name} fixture pins its 45-minute score`, async () => {
+    const { score } = await exportOnce(fixture);
+    assert.deepEqual(
+      score,
+      readFixture(fixture.name).score,
+      'The 45-minute score drifted from the approved one. If this change is intentional, run `npm run fixtures` and review the diff.',
+    );
+  });
 }
+
+// The byte-identity test above is only worth anything if reassembly is text
+// substitution and nothing else. A reassembly that derived a value instead —
+// startBar from the anchor, say — would move with an engine change that moved the
+// real one, and the test would then compare two things that had drifted together
+// and pass. Sentinels no exporter could produce are the only way to see the
+// difference: substitution hands them back untouched, derivation cannot.
+test('reassembly substitutes pinned text and derives nothing', () => {
+  const { engine } = readFixture(FIXTURES[0].name);
+  const sentinels = Object.fromEntries(LAYERS.map((layer) => [layer.key, `<<${layer.key}>>`]));
+  const source = reassemble(engine, sentinels);
+  for (const layer of LAYERS) {
+    assert.ok(!source.includes(layer.placeholder), `${layer.placeholder} survived reassembly`);
+    assert.equal(source.split(sentinels[layer.key]).length - 1, 1, `${layer.key} was not substituted exactly once`);
+  }
+  // Total substitution: the length moved by exactly what the three swaps cost,
+  // so nothing outside the placeholders was rewritten, dropped or generated.
+  const delta = LAYERS.reduce((n, layer) => n + sentinels[layer.key].length - layer.placeholder.length, 0);
+  assert.equal(source.length, engine.length + delta, 'reassembly changed text outside the placeholders');
+});
+
+// The split is lossless either way, but an over-capturing one — a pinned value
+// that swallowed the lines around it — would put the engine back into both
+// per-anchor files and the byte test would still pass. Every pinned value covering
+// part of one line is what keeps the shared layer shared.
+test('every per-anchor value is part of a single line', () => {
+  for (const fixture of FIXTURES) {
+    const { values } = readFixture(fixture.name);
+    for (const layer of LAYERS) {
+      const value = values[layer.key];
+      assert.equal(typeof value, 'string', `${fixture.name} pins no text for ${layer.key}`);
+      assert.ok(!value.includes('\n'), `${fixture.name}'s ${layer.key} spans lines: ${JSON.stringify(value.slice(0, 120))}`);
+    }
+  }
+});
+
+// Issue #3 asks for a one-value change to composer.mjs to produce a diff about
+// the music rather than the engine body, and #1's constraint is that the lock
+// still fails on any such change. Both are claims about a file layout, so this
+// makes the edit and reads where it lands: the melody gain is a mix-level value,
+// so it has to break the byte lock and show up in the engine snapshot alone,
+// leaving both anchors' pinned values untouched.
+test('a mix-level change to composer.mjs lands in the engine snapshot alone', async () => {
+  const fixture = FIXTURES.find((f) => f.name === 'quiet-afternoon');
+  const { strudel } = await exportFixture(fixture, {
+    patchComposer: (source) => {
+      const parts = source.split('gain: .09');
+      assert.equal(parts.length, 2, 'expected exactly one `gain: .09` in VOICES (the melody voice)');
+      return parts.join('gain: .095');
+    },
+  });
+  const pinned = readFixture(fixture.name);
+  assert.notEqual(strudel, pinned.strudel, 'the melody gain edit never reached the export, so this proves nothing about the lock');
+  const { engine, values } = splitExport(strudel);
+  assert.notEqual(engine, pinned.engine, 'a changed gain did not reach the engine snapshot; the shared layer no longer carries the mix');
+  assert.deepEqual(values, pinned.values, 'a mix-level change moved a per-anchor value: the split no longer separates the engine from the anchor');
+});
 
 test('the weathered-night fixture still exercises motif recall', async () => {
   const fixture = FIXTURES.find((f) => f.name === 'weathered-night');
