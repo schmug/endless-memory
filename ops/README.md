@@ -15,7 +15,7 @@ ops/videofeed.sh                      the frame writer, as systemd runs it
 ops/videofeed.mjs                     the frame policy — which frame goes out, and when
 ops/placeholder.mjs                   generates ops/placeholder.png
 ops/placeholder.png                   the launch picture, 1280x720
-ops/measure.mjs                       level, pacing and A/V-sync parsers and verdicts
+ops/measure.mjs                       level, pacing, A/V-sync and stall parsers and verdicts
 ops/tier0.mjs                         the local-sink proof run (`npm run tier0`)
 ops/endless-memory-stream.service     systemd unit: render -> ffmpeg
 ops/endless-memory-videofeed.service  systemd unit: the frame writer
@@ -35,7 +35,8 @@ Verdicts, each a gate: both tracks present at the right size and sample rate; dr
 inside the bound `runtime/realtime.mjs`'s `driftTolerance()` derives; no silent stretch;
 no interval below the 0.97 pacing floor; `ebur128` levels inside −22…−18 LUFS with true
 peak at or below −1 dBTP; A/V skew not growing past GOP quantisation; the feeder kill
-survived; ffmpeg's RSS flat. A clean exit and a large file are not a pass.
+survived; the output clock never frozen for 120s; ffmpeg's RSS flat. A clean exit and a
+large file are not a pass, and neither is a run that never exited at all.
 
 Every flag change gets validated here first. It costs nothing.
 
@@ -101,6 +102,46 @@ unobtainable. Tier 0 works around it by running at `-loglevel info` and reading 
 end-of-run Summary, which a bounded run has. A continuous signal would need
 `ametadata=print` at a sane interval, or an out-of-band measurement. Unresolved; it is
 a monitoring gap, not a pipeline defect, and it does not block tier 0.
+
+### 4. ffmpeg can deadlock with every process alive — the worst failure mode here
+
+Observed 2026-09-14, 31 minutes into a 60-minute run and 90 seconds after the video
+feeder was SIGKILLed and restarted: ffmpeg's output clock froze at 1791s and never moved
+again. `sample` showed every ffmpeg thread — `dmx0:image2pipe`, `dmx1:s16le`, `fc0`,
+`enc0:0:libx264`, `enc0:1:aac`, `mux0:flv` and the main thread — parked in
+`__psynch_cvwait`. Nothing was blocked on a pipe read; the video feeder was writing
+normally and ffmpeg had consumed everything it wrote. RSS crept 350.3 → 352.2 MB as
+buffers filled behind the wedge. Renderer, ffmpeg, `stream.sh` and `videofeed` all
+stayed alive.
+
+**That state is worse than a crash.** Nothing exits, so `pipefail` never fires,
+`-shortest` never fires, and `Restart=always` never fires. A supervisor watching process
+liveness reports a healthy unit over dead air, indefinitely.
+
+Two consequences:
+
+- **The off-host watchdog is load-bearing, not a refinement.** The spec describes
+  host-local signals as answering *why* after the Cloudflare watchdog answers *whether*.
+  Against a wedge, the off-host watchdog is the only thing that answers *whether* at all,
+  because every host-local liveness check says healthy. A host-local check on **output
+  progress** — ffmpeg's `time=` advancing, or renderer progress lines arriving — catches
+  it; a check on process liveness never does.
+- **`npm run tier0` now fails a wedged run instead of hanging on it.** `detectStall()`
+  watches the output clock; 120s frozen ends the run with a `DEAD AIR` verdict naming the
+  frozen timestamp. Before that fix the harness waited on process exit, so the one
+  failure that mattered most was the one it could not report.
+
+**The cause is not identified and the wedge is not deterministic.** A 2-minute run and a
+6-minute run with the same feeder kill both recovered cleanly (the 6-minute one dipped
+pacing to 0.822x during the outage and was back above the 0.97 floor by 140s). Two
+candidates, with nothing yet separating them: `-shortest`, added this session on the
+strength of finding 1; and the `fps=30` filter or `-re` on `image2pipe` mishandling a gap
+in frame arrivals. If `-shortest` turns out to be the cause, there is a real tension to
+resolve — it is also the only thing that makes renderer death detectable.
+
+The 120s stall threshold is borrowed from the spec's "`speed` outside band for 2 minutes"
+alert. It was not derived from how long a legitimate feeder outage can freeze the clock;
+the only data point is that a 5-second outage froze it for under 10 seconds.
 
 ## Levels: measured, not corrected
 
