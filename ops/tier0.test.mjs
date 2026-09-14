@@ -78,10 +78,15 @@ test('collectFailures gates on every verdict, not just the exit code', () => {
     renderCode: 0, ffmpegCode: 0, outputBytes: 1024,
     tracks: { ok: true, reason: 't' }, drift: { ok: true, reason: 'd' }, silence: { ok: true, reason: 's' },
     starvation: { ok: true, reason: 'p' }, levels: { ok: true, reason: 'l' }, avSkew: { ok: true, reason: 'a' },
-    feederKill: { ok: true, reason: 'f' }, feederOutage: { ok: true, reason: 'o' }, rssVerdict: { ok: true, reason: 'r' },
+    feederKill: { ok: true, reason: 'f' }, feederOutage: { ok: true, reason: 'o' },
+    stall: { ok: true, reason: 'n' }, rssVerdict: { ok: true, reason: 'r' },
   };
 
   assert.deepEqual(collectFailures(clean), []);
+  // The failure mode that hung a 60-minute run on 2026-09-14: ffmpeg wedged with every
+  // process alive, so the harness's own exit-code check would have reported nothing at
+  // all. A stall has to be a gate in its own right.
+  assert.deepEqual(collectFailures({ ...clean, ffmpegCode: 0, stall: { ok: false, reason: 'DEAD AIR at 1791s' } }), ['DEAD AIR at 1791s']);
   assert.deepEqual(collectFailures({ ...clean, feederOutage: { ok: false, reason: 'never recovered' } }), ['never recovered']);
   assert.deepEqual(collectFailures({ ...clean, levels: { ok: false, reason: 'true peak too high' } }), ['true peak too high']);
   assert.equal(collectFailures({ ...clean, ffmpegCode: 1 }).length, 1);

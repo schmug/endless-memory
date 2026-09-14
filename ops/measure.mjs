@@ -214,3 +214,49 @@ export function assessFeederOutage({ intervals, killedAtSeconds, restartedAtSeco
     reason: `${cost}, back above the ${floor} floor by ${recovered.toSeconds.toFixed(0)}s`,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Stalls
+// ---------------------------------------------------------------------------
+
+// How long ffmpeg's output clock may sit still before it counts as dead air rather than
+// an outage being absorbed. 120s matches the spec's own `speed outside band for 2
+// minutes` alert window, and is comfortably longer than the few seconds a feeder outage
+// was observed to cost.
+export const STALL_SECONDS = 120;
+
+// Observed 2026-09-14, 31 minutes into a 60-minute tier-0 run and 90 seconds after the
+// video feeder was killed and restarted: ffmpeg's `time=` froze at 1791s and never moved
+// again. Every process stayed alive and every ffmpeg thread — both demuxers, the filter
+// chain, both encoders, the muxer — sat in __psynch_cvwait, so nothing was blocked on a
+// pipe read. It is an internal deadlock, and it is worse than a crash: nothing exits, so
+// pipefail, -shortest and Restart=always are all silent over dead air, and a supervisor
+// watching process liveness sees a healthy unit.
+//
+// Watching the OUTPUT advance is the only thing that catches it. This is also why the
+// spec's off-host watchdog is load-bearing rather than a refinement: a host-local check
+// on process liveness would have reported this pipeline as healthy indefinitely.
+export function detectStall(records, { stallSeconds = STALL_SECONDS } = {}) {
+  if (records.length < 2) return { stalled: false, reason: 'not enough progress records to judge' };
+  const latest = records[records.length - 1];
+  let since = latest;
+  for (let i = records.length - 2; i >= 0; i--) {
+    if (records[i].timeSeconds !== latest.timeSeconds) break;
+    since = records[i];
+  }
+  const stalledForSeconds = latest.elapsedSeconds - since.elapsedSeconds;
+  return {
+    stalled: stalledForSeconds >= stallSeconds,
+    frozenAtSeconds: latest.timeSeconds,
+    stalledForSeconds,
+    sinceSeconds: since.elapsedSeconds,
+  };
+}
+
+export function assessStall(stall) {
+  if (!stall || !stall.stalled) return { ok: true, reason: 'output clock advanced throughout' };
+  return {
+    ok: false,
+    reason: `DEAD AIR: ffmpeg's output clock froze at ${stall.frozenAtSeconds}s and did not move for ${stall.stalledForSeconds.toFixed(0)}s — every process stayed alive, so nothing exited and no supervisor would have noticed`,
+  };
+}

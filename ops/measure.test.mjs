@@ -4,7 +4,7 @@ import {
   parseEbur128Summary, assessLevels, LOUDNESS_BAND_LUFS, MAX_TRUE_PEAK_DBFS, SOURCE_LEVELS,
   parseProgressRecords, intervalSpeeds, assessStarvation, startupOffsetSeconds,
   STARVATION_FLOOR, skewFromPackets, assessAvSkew, GOP_SECONDS, FORBIDDEN_FILTERS,
-  assessFeederOutage,
+  assessFeederOutage, detectStall, assessStall,
 } from './measure.mjs';
 
 // Captured verbatim from the tier-0 invocation on ffmpeg 8.0, 2026-09-14. ebur128
@@ -250,4 +250,70 @@ test('an unmeasurable skew is not a passing one', () => {
 
 test('the forbidden filter list is the one the spec names permanently forbidden', () => {
   assert.deepEqual([...FORBIDDEN_FILTERS].sort(), ['acompressor', 'alimiter', 'aresample=async', 'atempo', 'loudnorm'].sort());
+});
+
+// Observed 2026-09-14, 31 minutes into a 60-minute run, 90 seconds after the video
+// feeder was killed and restarted: ffmpeg's output clock froze at 1791s and never moved
+// again. Every process stayed alive — renderer, ffmpeg, videofeed, stream.sh — and every
+// ffmpeg thread (both demuxers, the filter chain, both encoders, the muxer) sat in
+// __psynch_cvwait, so nothing was blocked on a pipe read. RSS crept 350.3 -> 352.2 MB as
+// buffers filled behind the wedge.
+//
+// This is worse than a crash: nothing exits, so pipefail never fires, -shortest never
+// fires, and Restart=always never fires. A supervisor watching process liveness sees a
+// healthy unit over dead air. The only thing that catches it is watching OUTPUT advance.
+test('a frozen output clock is a stall, however alive the processes are', () => {
+  const records = [
+    { elapsedSeconds: 1700, timeSeconds: 1682, speed: 0.99 },
+    { elapsedSeconds: 1800, timeSeconds: 1782, speed: 0.99 },
+    { elapsedSeconds: 1860, timeSeconds: 1791, speed: 0.97 },
+    { elapsedSeconds: 1920, timeSeconds: 1791, speed: 0.94 },
+    { elapsedSeconds: 1980, timeSeconds: 1791, speed: 0.91 },
+  ];
+  const verdict = detectStall(records, { stallSeconds: 120 });
+
+  assert.equal(verdict.stalled, true);
+  assert.equal(verdict.frozenAtSeconds, 1791);
+  assert.ok(verdict.stalledForSeconds >= 120, `only ${verdict.stalledForSeconds}s`);
+});
+
+test('a clock still advancing is not a stall, even when it is behind', () => {
+  const records = [
+    { elapsedSeconds: 1800, timeSeconds: 1782, speed: 0.99 },
+    { elapsedSeconds: 1920, timeSeconds: 1899, speed: 0.98 },
+    { elapsedSeconds: 2040, timeSeconds: 2019, speed: 0.98 },
+  ];
+
+  assert.equal(detectStall(records, { stallSeconds: 120 }).stalled, false);
+});
+
+// A freeze shorter than the window is the feeder outage being absorbed, which the
+// 2-minute run showed recovering. Calling that a stall would fail every criterion-6
+// demonstration.
+test('a brief freeze inside the window is not yet a stall', () => {
+  const records = [
+    { elapsedSeconds: 1800, timeSeconds: 1782, speed: 0.99 },
+    { elapsedSeconds: 1830, timeSeconds: 1791, speed: 0.98 },
+    { elapsedSeconds: 1860, timeSeconds: 1791, speed: 0.97 },
+  ];
+
+  assert.equal(detectStall(records, { stallSeconds: 120 }).stalled, false);
+});
+
+test('too few records to judge is not a stall', () => {
+  assert.equal(detectStall([], { stallSeconds: 120 }).stalled, false);
+  assert.equal(detectStall([{ elapsedSeconds: 10, timeSeconds: 2, speed: 0.2 }], { stallSeconds: 120 }).stalled, false);
+});
+
+// The verdict a stalled run must carry, so it reports FAIL instead of hanging forever.
+test('a stall is a failure that names dead air, not a slow run', () => {
+  const verdict = assessStall({ stalled: true, frozenAtSeconds: 1791, stalledForSeconds: 180, sinceSeconds: 1860 });
+
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reason, /dead air|stall/i);
+  assert.match(verdict.reason, /1791/);
+});
+
+test('no stall passes', () => {
+  assert.equal(assessStall({ stalled: false }).ok, true);
 });

@@ -14,7 +14,7 @@
 // file and in ops/measure.mjs are what `npm test` covers.
 
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, statSync, existsSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, statSync, existsSync, mkdirSync, createWriteStream } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { once } from 'node:events';
@@ -28,6 +28,7 @@ import { SR } from '../runtime/voices.mjs';
 import {
   parseEbur128Summary, assessLevels, parseProgressRecords, intervalSpeeds,
   assessStarvation, startupOffsetSeconds, skewFromPackets, assessAvSkew, assessFeederOutage,
+  detectStall, assessStall, STALL_SECONDS,
 } from './measure.mjs';
 
 const HERE = new URL('.', import.meta.url).pathname;
@@ -90,9 +91,11 @@ export function assessFeederKill({ killedAtSeconds, audioEndSeconds, targetSecon
 export function collectFailures(r) {
   const failures = [];
   if (r.renderCode !== 0 && r.renderCode !== null) failures.push(`the renderer exited ${r.renderCode}`);
-  if (r.ffmpegCode !== 0) failures.push(`stream.sh exited ${r.ffmpegCode}`);
+  // A stalled run is killed by the harness, so its exit code is the kill and reporting
+  // it as well would bury the stall under a second, less informative failure.
+  if (r.ffmpegCode !== 0 && r.stall?.ok !== false) failures.push(`stream.sh exited ${r.ffmpegCode}`);
   if (!r.outputBytes) failures.push('the output file is empty');
-  for (const key of ['tracks', 'drift', 'silence', 'starvation', 'levels', 'avSkew', 'feederKill', 'feederOutage', 'rssVerdict']) {
+  for (const key of ['stall', 'tracks', 'drift', 'silence', 'starvation', 'levels', 'avSkew', 'feederKill', 'feederOutage', 'rssVerdict']) {
     const v = r[key];
     if (v && !v.ok) failures.push(v.reason);
   }
@@ -154,6 +157,7 @@ export async function tier0({
   out,
   killFeederAt = null,
   sampleSeconds = 10,
+  stallSeconds = STALL_SECONDS,
   onSample = () => {},
 } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'tier0-'));
@@ -181,11 +185,18 @@ export async function tier0({
 
   const started = Date.now();
   let stderr = '';
-  stream.stderr.on('data', (d) => { stderr += d; });
+  // Teed to disk as well as held in memory. A wedged run reports nothing until it exits,
+  // and on 2026-09-14 one never exited — ffmpeg's own account of the stall was
+  // unreachable for as long as it mattered. The file is what makes a live stall
+  // diagnosable.
+  const stderrPath = `${output}.ffmpeg.log`;
+  const stderrFile = createWriteStream(stderrPath);
+  stream.stderr.on('data', (d) => { stderr += d; stderrFile.write(d); });
 
   let feeder = spawnFeeder(fifo);
   let feederKilledAt = null;
   let feederRestartedAt = null;
+  let stall = null;
 
   const samples = [];
   let lastRecord = null;
@@ -198,6 +209,17 @@ export async function tier0({
     const sample = { hours: (Date.now() - started) / 3600000, rss: ffmpeg.rssBytes, heapUsed: 0 };
     samples.push(sample);
     onSample(sample, lastRecord);
+
+    // A wedged ffmpeg keeps every process alive and never exits, so waiting on close()
+    // waits forever — observed 2026-09-14. The harness has to notice the output clock
+    // standing still and end the run itself, or it cannot report the one failure that
+    // matters most.
+    const check = detectStall(records, { stallSeconds });
+    if (check.stalled && !stall) {
+      stall = check;
+      process.stderr.write(`  [${((Date.now() - started) / 60000).toFixed(1)} min] STALLED: output clock frozen at ${check.frozenAtSeconds}s for ${check.stalledForSeconds.toFixed(0)}s — ending the run\n`);
+      killTree(stream.pid);
+    }
   }, sampleSeconds * 1000);
 
   // The feeder kill: SIGKILL the whole videofeed tree, leave it dead long enough that a
@@ -251,7 +273,7 @@ export async function tier0({
   const analysis = analyse(samples, { totalHours: Math.max(wallSeconds / 3600, 1e-9) });
 
   const result = {
-    seconds, anchor, chunkCycles, output, outputBytes, wallSeconds, producedSeconds,
+    seconds, anchor, chunkCycles, output, outputBytes, wallSeconds, producedSeconds, stderrPath,
     durationSeconds, tolerance, records, intervals, samples, analysis,
     startupOffsetSeconds: startupOffsetSeconds(records),
     ffmpegCode: streamCode,
@@ -282,6 +304,7 @@ export async function tier0({
       framesResumed: feederRestartedAt !== null && durationSeconds > feederRestartedAt,
     }),
     feederOutage: assessFeederOutage({ intervals, killedAtSeconds: feederKilledAt, restartedAtSeconds: feederRestartedAt }),
+    stall: assessStall(stall ?? detectStall(records, { stallSeconds })),
     rssVerdict: assessRssSlope({ slopeBytesPerHour: analysis.rssSlopeBytesPerHour, wallSeconds }),
   };
   result.failures = collectFailures(result);
@@ -305,6 +328,8 @@ export function formatTier0Report(r) {
   lines.push(`  silence: ${r.silence.reason}`);
   lines.push(`  video feeder: ${r.feederKill.reason}`);
   lines.push(`  outage cost: ${r.feederOutage.reason}`);
+  lines.push(`  stall: ${r.stall.reason}`);
+  lines.push(`  ffmpeg log: ${r.stderrPath}`);
   if (r.renderReport) lines.push(`  ${r.renderReport}`);
   lines.push('  phase  span (h)        samples   median RSS    min RSS     max RSS   (ffmpeg)');
   for (const p of r.analysis.phases) {
