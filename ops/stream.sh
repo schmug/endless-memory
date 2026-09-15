@@ -30,6 +30,9 @@ VIDEO_FIFO="${VIDEO_FIFO:-/run/endless-memory/video.fifo}"
 # ops/videofeed.test.mjs pins the two together.
 VIDEO_FPS="${VIDEO_FPS:-2}"
 RENDER="${RENDER:-$HERE/../runtime/render.mjs}"
+# Overridable so ops/supervision.test.mjs can exercise the supervision logic in seconds
+# with a stub, instead of only inside a long run against the real encoder.
+FFMPEG="${FFMPEG:-ffmpeg}"
 CHUNK_CYCLES="${CHUNK_CYCLES:-8}"
 LOGLEVEL="${LOGLEVEL:-warning}"
 # Default -stats emits continuously and would flood journald; 60 keeps it to ~1,440
@@ -98,11 +101,45 @@ fi
 [ -p "$VIDEO_FIFO" ] || mkfifo -m 600 "$VIDEO_FIFO"
 
 # A fifo returns EOF to its reader when the last writer closes. Holding it open
-# read-write on a spare descriptor means videofeed can start, crash and be replaced
-# without ffmpeg ever seeing the end of the stream. Opening O_RDWR does not block.
-# WITHOUT THIS, RESTARTING THE VIDEO FEEDER ENDS THE BROADCAST.
+# read-write on a spare descriptor means the feeder and ffmpeg can be started in either
+# order without one blocking on the other, and a feeder that exits during shutdown does
+# not deliver EOF mid-teardown. Opening O_RDWR does not block.
 exec 3<>"$VIDEO_FIFO"
+
+# THE FEEDER IS A CHILD OF THIS UNIT, NOT A UNIT OF ITS OWN.
+#
+# Measured 2026-09-15: replacing the process that writes the video fifo wedges ffmpeg —
+# it stops pacing the video input, reads at the writer's full rate, video PTS runs away
+# from audio, and every thread parks in __psynch_cvwait with the output clock frozen.
+# Six configurations were ablated (with and without -shortest, with and without -re on
+# the video input, index versus wallclock timestamps, a 0.5s restart gap versus 5s) and
+# every one of them wedges. Only pausing and resuming the SAME process is safe.
+#
+# So the fifo's writer is never replaced under a live ffmpeg. The feeder lives and dies
+# with the pipeline, and systemd restarts all three together. See ops/README.md.
+#
+# Piece D is unaffected by this: it is decoupled by the file interface videofeed reads,
+# never by videofeed being separately supervised.
+bash "$HERE/videofeed.sh" &
+VIDEOFEED=$!
 
 # pipefail (set above) so a renderer failure fails the unit even though ffmpeg exits 0
 # on EOF.
-node "$RENDER" "${RENDER_ARGS[@]}" | ffmpeg "${FFMPEG_ARGS[@]}"
+node "$RENDER" "${RENDER_ARGS[@]}" | "$FFMPEG" "${FFMPEG_ARGS[@]}" &
+PIPELINE=$!
+
+# Whichever dies first takes the other with it. A feeder-only restart is the failure
+# this whole arrangement exists to prevent, so a dead feeder must fail the unit.
+while kill -0 "$VIDEOFEED" 2>/dev/null && kill -0 "$PIPELINE" 2>/dev/null; do
+  sleep 1
+done
+
+if ! kill -0 "$VIDEOFEED" 2>/dev/null && kill -0 "$PIPELINE" 2>/dev/null; then
+  echo "stream.sh: the video feeder exited — ending the pipeline so systemd restarts both rather than handing a live ffmpeg a new writer" >&2
+  kill -TERM "$PIPELINE" 2>/dev/null
+  wait "$PIPELINE" 2>/dev/null
+  exit 75
+fi
+
+kill -TERM "$VIDEOFEED" 2>/dev/null
+wait "$PIPELINE"

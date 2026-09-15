@@ -603,6 +603,55 @@ three attempts at that shape, cause still unidentified. It is not a reason to tr
 pipeline as sound: the failure was observed, it is undetectable by process liveness, and
 nothing here explains it.
 
+## The video seam, corrected — 2026-09-15
+
+The seam above says `videofeed` is a **separate** unit, and that "that separation is the
+whole decoupling from piece D". Building it and then attacking it showed both halves of
+that to be wrong.
+
+**Replacing the process that writes the fifo wedges ffmpeg.** On the far side of a feeder
+replacement, ffmpeg stops pacing the video input and reads at the writer's full rate;
+video PTS runs away from audio, the muxer cannot interleave, and every thread parks in
+`__psynch_cvwait` with the output clock frozen. Nothing exits, so `pipefail`, `-shortest`
+and `Restart=always` are all silent, and a host-local liveness check sees a healthy unit
+over dead air.
+
+Six configurations were ablated; the trial number is where the wedge appeared under a
+stress harness killing the feeder every 15-20 s:
+
+| variant | result |
+|---|---|
+| as specified | trial 3 |
+| `-use_wallclock_as_timestamps 1` on the video input | trial 7 |
+| wallclock timestamps AND no `-re` on the video input | trial 11 |
+| `-shortest` removed | trial 2 |
+| restart gap cut from 5 s to 0.5 s | trial 2 |
+| `SIGSTOP`/`SIGCONT` the same feeder process | 15 trials, no wedge |
+
+So it is not `-shortest`, not `-re` on the video input, not index-versus-wallclock
+timestamps, not the gap length, and not a truncated PNG. It is replacing the writer.
+
+**Two corrections follow.**
+
+1. **`videofeed` is not a separate unit.** `ops/stream.sh` starts it and the two die
+   together; a feeder fault fails the unit and systemd restarts all three. Restarting is
+   cheap for exactly the reason "Supervision and restart recovery" already gives: scene
+   index is derived from absolute time, so the music resumes at the right moment.
+
+2. **What decouples piece D is the file interface, not the unit boundary.** `videofeed`
+   reads a path; piece D can crash, stall, or write rubbish without the fifo's writer
+   ever being replaced. The separate unit bought nothing for piece D and cost this
+   failure mode. The seam's three properties are otherwise unchanged, and the contract
+   piece D must meet is still the same one sentence.
+
+**Acceptance criterion 6 is therefore replaced.** It asked that killing `videofeed` leave
+the broadcast running and the unit restart and resume feeding. That is unachievable, and
+the hour-long tier-0 run that appeared to satisfy it did so by luck. The criterion is now
+the opposite, and is met: **killing the feeder must END the pipeline promptly**, so
+systemd restarts it whole. Measured 2026-09-15 — feeder killed at 90.1 s, pipeline ended
+1.0 s later. `ops/supervision.test.mjs` holds it in `npm test`; `npm run tier0 --
+--kill-feeder-at N` is the same check against real ffmpeg.
+
 ## Constraints
 
 - Node 22 and ffmpeg on an always-on Linux host. The realtime harness parses ffmpeg 8.0's

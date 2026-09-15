@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const unit = (name) => readFileSync(new URL(`./${name}`, import.meta.url), 'utf8');
-const STREAM = unit('endless-memory-stream.service');
-const VIDEOFEED = unit('endless-memory-videofeed.service');
+// One unit, not two. The feeder was a separate unit until 2026-09-15, when replacing
+// the fifo's writer under a live ffmpeg was measured to wedge it — see ops/README.md
+// and ops/supervision.test.mjs. stream.sh now owns the feeder.
+const STREAM = readFileSync(new URL('./endless-memory-stream.service', import.meta.url), 'utf8');
 
 // A start limit makes systemd GIVE UP after a burst of restarts. For a 24/7 station
 // permanent dead air is strictly worse than a restart loop, so the unit must keep
@@ -25,14 +26,12 @@ function section(text, name) {
   return lines.join('\n');
 }
 
-test('neither unit is allowed to give up restarting', () => {
-  for (const [name, text] of [['stream', STREAM], ['videofeed', VIDEOFEED]]) {
-    assert.match(section(text, 'Service'), /^Restart=always$/m, `${name} does not restart always`);
-    assert.match(section(text, 'Unit'), /^StartLimitIntervalSec=0$/m,
-      `${name}: StartLimitIntervalSec=0 is not in [Unit], so systemd ignores it and applies the default start limit`);
-    assert.doesNotMatch(section(text, 'Service'), /StartLimitIntervalSec/,
-      `${name}: StartLimitIntervalSec is in [Service], where systemd ignores it`);
-  }
+test('the unit is not allowed to give up restarting', () => {
+  assert.match(section(STREAM, 'Service'), /^Restart=always$/m, 'does not restart always');
+  assert.match(section(STREAM, 'Unit'), /^StartLimitIntervalSec=0$/m,
+    'StartLimitIntervalSec=0 is not in [Unit], so systemd ignores it and applies the default start limit');
+  assert.doesNotMatch(section(STREAM, 'Service'), /StartLimitIntervalSec/,
+    'StartLimitIntervalSec is in [Service], where systemd ignores it');
 });
 
 // ffmpeg exits 0 on EOF, so without pipefail a renderer crash looks like success and
@@ -41,29 +40,16 @@ test('the stream unit runs the pipeline under pipefail', () => {
   assert.match(STREAM, /^ExecStart=.*-o pipefail.*stream\.sh/m);
 });
 
-// videofeed is a SEPARATE unit, and that separation is the whole decoupling from piece
-// D. An ordering or binding dependency on the stream unit would put the frame writer
-// back in the broadcast path — the exact coupling the fifo holder fd exists to prevent.
-test('the videofeed unit is independent of the stream unit', () => {
-  assert.doesNotMatch(VIDEOFEED, /^(BindsTo|Requires|PartOf|Requisite)=.*endless-memory-stream/m);
-  assert.match(VIDEOFEED, /videofeed\.sh/);
+test('the unit runs unprivileged and confined', () => {
+  assert.match(STREAM, /^User=(?!root$)\S+$/m, 'does not run as a dedicated non-root user');
+  assert.match(STREAM, /^NoNewPrivileges=yes$/m);
+  assert.match(STREAM, /^ProtectSystem=strict$/m);
+  assert.match(STREAM, /^PrivateTmp=yes$/m);
 });
 
-test('both units run unprivileged and confined', () => {
-  for (const [name, text] of [['stream', STREAM], ['videofeed', VIDEOFEED]]) {
-    assert.match(text, /^User=(?!root$)\S+$/m, `${name} does not run as a dedicated non-root user`);
-    assert.match(text, /^NoNewPrivileges=yes$/m, name);
-    assert.match(text, /^ProtectSystem=strict$/m, name);
-    assert.match(text, /^PrivateTmp=yes$/m, name);
-  }
-});
-
-// The fifo lives under /run, which systemd must create and both units must share.
-test('both units share the runtime directory the fifo lives in', () => {
-  for (const text of [STREAM, VIDEOFEED]) {
-    assert.match(text, /^RuntimeDirectory=endless-memory$/m);
-    assert.match(text, /^RuntimeDirectoryPreserve=yes$/m);
-  }
+// The fifo lives under /run, which systemd must create for the unit.
+test('the unit creates the runtime directory the fifo lives in', () => {
+  assert.match(STREAM, /^RuntimeDirectory=endless-memory$/m);
 });
 
 // Unit files are world-readable. The key is loaded via EnvironmentFile and the RTMPS

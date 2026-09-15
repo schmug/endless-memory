@@ -187,34 +187,6 @@ export function assessAvSkew({ startSkew, endSkew }) {
   };
 }
 
-// What a video-feeder outage costs the audio, measured rather than assumed. Observed
-// 2026-09-14: a 5-second outage dipped pacing to 0.650x and the run still reached its
-// full length with no silent stretch — the muxer stalled and then caught up. The gate is
-// RECOVERY, because criterion 6 is about the broadcast surviving; the dip itself is a
-// figure to report.
-export function assessFeederOutage({ intervals, killedAtSeconds, restartedAtSeconds, floor = STARVATION_FLOOR }) {
-  if (killedAtSeconds === null || killedAtSeconds === undefined) {
-    return { ok: true, attempted: false, reason: 'no video-feeder outage in this run' };
-  }
-  const window = [killedAtSeconds, restartedAtSeconds ?? Infinity];
-  const during = intervals.filter((i) => overlaps(i, window));
-  const dipSpeed = during.length ? Math.min(...during.map((i) => i.speed)) : null;
-  const recovered = intervals.find((i) => i.fromSeconds >= (restartedAtSeconds ?? Infinity) && i.speed >= floor);
-  const cost = dipSpeed === null
-    ? 'no pacing sample landed inside the outage'
-    : `pacing dipped to ${dipSpeed.toFixed(3)}x during the outage`;
-  if (!recovered) {
-    return {
-      ok: false, attempted: true, dipSpeed, recoveredBySeconds: null,
-      reason: `${cost} and never recovered above the ${floor} floor afterwards`,
-    };
-  }
-  return {
-    ok: true, attempted: true, dipSpeed, recoveredBySeconds: recovered.toSeconds,
-    reason: `${cost}, back above the ${floor} floor by ${recovered.toSeconds.toFixed(0)}s`,
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Stalls
 // ---------------------------------------------------------------------------

@@ -10,15 +10,14 @@ spec's test path (a test live input, an unlisted YouTube broadcast, the public s
 need a host that does not exist yet.
 
 ```
-ops/stream.sh                         the pipeline: render.mjs | ffmpeg, and the fifo holder fd
-ops/videofeed.sh                      the frame writer, as systemd runs it
+ops/stream.sh                         the pipeline: render.mjs | ffmpeg, the feeder, the fifo holder fd
+ops/videofeed.sh                      the frame writer, started by stream.sh
 ops/videofeed.mjs                     the frame policy — which frame goes out, and when
 ops/placeholder.mjs                   generates ops/placeholder.png
 ops/placeholder.png                   the launch picture, 1280x720
 ops/measure.mjs                       level, pacing, A/V-sync and stall parsers and verdicts
 ops/tier0.mjs                         the local-sink proof run (`npm run tier0`)
-ops/endless-memory-stream.service     systemd unit: render -> ffmpeg
-ops/endless-memory-videofeed.service  systemd unit: the frame writer
+ops/endless-memory-stream.service     systemd unit: render -> ffmpeg -> and the feeder
 ```
 
 ## Run tier 0
@@ -52,6 +51,9 @@ against `DECLARED_FPS` 2 — so `-re` throttles it through pipe backpressure. A 
 slower than nominal starves the muxer, and a starved muxer stalls the *audio*: the one
 way a picture problem takes the station off the air. `ops/videofeed.test.mjs` pins the
 declared rate to what `stream.sh` actually hands ffmpeg.
+
+**`videofeed` is started by `stream.sh`, never supervised separately** — see "The wedge"
+below; a feeder-only restart wedges ffmpeg.
 
 **`videofeed` emits a frame regardless of piece D's state.** Missing, stale, empty,
 truncated, unreadable — something goes out. Piece D (#38) becomes a frame *source* that
@@ -208,12 +210,25 @@ Note what this does *not* threaten: piece D is decoupled by the **file interface
 crash, stall, or write rubbish without the fifo's writer ever being replaced. The
 separate unit buys nothing for piece D and costs this failure mode.
 
-Unresolved, and left for a decision rather than guessed at: whether to fold `videofeed`
-into the stream unit so a feeder fault restarts the whole pipeline (cheap: the spec puts
-a restart at ~2-3 s, and scene index is derived from absolute time so the music resumes
-in the right place), or to keep two units and have a feeder failure trigger a stream
-restart. Either way the rule is the same: **never replace the fifo's writer under a live
-ffmpeg.**
+### What was done about it
+
+**`videofeed` is no longer a unit. `stream.sh` starts it and the two die together.**
+Decided 2026-09-15. A feeder fault now fails the unit, and systemd restarts renderer,
+ffmpeg and feeder as one — which is cheap, because scene index is derived from absolute
+time, so the music resumes at the correct moment rather than replaying or skipping.
+
+The rule this enforces: **never replace the fifo's writer under a live ffmpeg.**
+
+`ops/supervision.test.mjs` holds it in place, against the real `stream.sh` with the two
+heavy binaries stubbed so it runs in seconds: the feeder is a child of the pipeline,
+killing it ends the pipeline within a grace window, and there is no separate
+always-restarting feeder unit. `npm run tier0 -- --kill-feeder-at N` is the same check
+against real ffmpeg — measured 2026-09-15: *feeder killed at 90.1s; the pipeline ended
+1.0s later*.
+
+Piece D is unaffected. It is decoupled by the **file interface** `videofeed` reads, and
+always was; the separate unit never bought anything for piece D and cost this failure
+mode.
 
 ## Two things verified rather than asserted, 2026-09-14
 
@@ -297,9 +312,9 @@ sudo rsync -a --delete ./ /opt/endless-memory/
 sudo install -d -m 0700 -o endless -g endless /etc/endless-memory
 sudo install -m 0600 -o endless -g endless /dev/null /etc/endless-memory/stream.env
 # then write CF_STREAM_KEY=... into that file, and nowhere else
-sudo cp ops/endless-memory-*.service /etc/systemd/system/
+sudo cp ops/endless-memory-stream.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now endless-memory-videofeed endless-memory-stream
+sudo systemctl enable --now endless-memory-stream
 ```
 
 The host must run NTP: the anchor **is** the wall clock. An unsynced clock is an

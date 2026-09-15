@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "pretest": "node test/pretest.mjs",
-    "test": "node --test composer.test.mjs export.test.mjs runtime/mini.test.mjs runtime/voices.test.mjs runtime/schedule.test.mjs runtime/render.test.mjs runtime/endurance.test.mjs runtime/realtime.test.mjs ops/placeholder.test.mjs ops/measure.test.mjs ops/videofeed.test.mjs ops/stream.test.mjs ops/units.test.mjs ops/tier0.test.mjs",
+    "test": "node --test composer.test.mjs export.test.mjs runtime/mini.test.mjs runtime/voices.test.mjs runtime/schedule.test.mjs runtime/render.test.mjs runtime/endurance.test.mjs runtime/realtime.test.mjs ops/placeholder.test.mjs ops/measure.test.mjs ops/videofeed.test.mjs ops/stream.test.mjs ops/units.test.mjs ops/supervision.test.mjs ops/tier0.test.mjs",
     "fixtures": "node test/update-fixtures.mjs",
     "export": "node station.mjs export",
     "golden": "node runtime/update-golden.mjs",

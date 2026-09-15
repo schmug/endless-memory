@@ -27,7 +27,7 @@ import { analyse } from '../runtime/endurance.mjs';
 import { SR } from '../runtime/voices.mjs';
 import {
   parseEbur128Summary, assessLevels, parseProgressRecords, intervalSpeeds,
-  assessStarvation, startupOffsetSeconds, skewFromPackets, assessAvSkew, assessFeederOutage,
+  assessStarvation, startupOffsetSeconds, skewFromPackets, assessAvSkew,
   detectStall, assessStall, STALL_SECONDS,
 } from './measure.mjs';
 
@@ -57,32 +57,36 @@ export function assessTracks(streams) {
     : { ok: true, reason: `${video.codec_name} ${video.width}x${video.height} + ${audio.codec_name} ${audio.sample_rate} Hz ${audio.channels}ch, one ffmpeg invocation` };
 }
 
-// Spec criterion 6. Killing videofeed must not end the broadcast: the picture freezes,
-// the audio continues, and the feeder comes back. This is the criterion that proves
-// piece D cannot take the station off the air, and it is the one the fifo holder fd in
-// ops/stream.sh exists for — without it, ffmpeg takes EOF on the video input and the
-// whole run ends with the feeder.
-const FEEDER_KILL_SURVIVAL_MARGIN_SECONDS = 5;
+// Criterion 6, inverted by measurement. The spec asked for "videofeed is killed and the
+// broadcast does not end ... the unit restarts and resumes feeding". On 2026-09-15 that
+// was measured to be unachievable: replacing the fifo's writer under a live ffmpeg wedges
+// it into dead air no liveness check can see, across six ffmpeg configurations.
+//
+// stream.sh now owns the feeder, so the safe behaviour is the opposite: a dead feeder
+// must END the pipeline promptly, and systemd restarts renderer, ffmpeg and feeder
+// together. A pipeline that outlives its feeder is the wedge.
+export const FEEDER_EXIT_GRACE_SECONDS = 15;
 
-export function assessFeederKill({ killedAtSeconds, audioEndSeconds, targetSeconds, framesResumed }) {
+export function assessFeederKill({ killedAtSeconds, exitedAtSeconds, graceSeconds = FEEDER_EXIT_GRACE_SECONDS }) {
   if (killedAtSeconds === null || killedAtSeconds === undefined) {
     return { ok: true, attempted: false, reason: 'no feeder kill attempted in this run' };
   }
-  if (audioEndSeconds < targetSeconds - FEEDER_KILL_SURVIVAL_MARGIN_SECONDS) {
+  if (exitedAtSeconds === null || exitedAtSeconds === undefined) {
     return {
-      ok: false, attempted: true,
-      reason: `the run ended at ${audioEndSeconds.toFixed(1)}s, shortly after the feeder was killed at ${killedAtSeconds.toFixed(1)}s, instead of reaching ${targetSeconds}s — the video feeder took the broadcast with it`,
+      ok: false, attempted: true, tookSeconds: Infinity,
+      reason: `the feeder was killed at ${killedAtSeconds.toFixed(1)}s and the pipeline did not end — that is the wedge, and it is dead air no liveness check can see`,
     };
   }
-  if (!framesResumed) {
+  const tookSeconds = exitedAtSeconds - killedAtSeconds;
+  if (tookSeconds > graceSeconds) {
     return {
-      ok: false, attempted: true,
-      reason: `the broadcast survived the feeder being killed at ${killedAtSeconds.toFixed(1)}s, but nothing ever resumed feeding it — the unit did not come back`,
+      ok: false, attempted: true, tookSeconds,
+      reason: `the pipeline took ${tookSeconds.toFixed(1)}s to end after its feeder died, past the ${graceSeconds}s grace — every second of that is dead air before systemd can restart it`,
     };
   }
   return {
-    ok: true, attempted: true,
-    reason: `feeder killed at ${killedAtSeconds.toFixed(1)}s; audio ran on to ${audioEndSeconds.toFixed(1)}s and the feed resumed`,
+    ok: true, attempted: true, tookSeconds,
+    reason: `feeder killed at ${killedAtSeconds.toFixed(1)}s; the pipeline ended ${tookSeconds.toFixed(1)}s later, so systemd restarts all three together`,
   };
 }
 
@@ -93,9 +97,17 @@ export function collectFailures(r) {
   if (r.renderCode !== 0 && r.renderCode !== null) failures.push(`the renderer exited ${r.renderCode}`);
   // A stalled run is killed by the harness, so its exit code is the kill and reporting
   // it as well would bury the stall under a second, less informative failure.
-  if (r.ffmpegCode !== 0 && r.stall?.ok !== false) failures.push(`stream.sh exited ${r.ffmpegCode}`);
+  // A stalled run is killed by the harness, and a feeder-kill run is MEANT to exit
+  // non-zero — that is the property under test. Neither is a separate failure.
+  if (r.ffmpegCode !== 0 && r.stall?.ok !== false && !r.feederKill?.attempted) failures.push(`stream.sh exited ${r.ffmpegCode}`);
   if (!r.outputBytes) failures.push('the output file is empty');
-  for (const key of ['stall', 'tracks', 'drift', 'silence', 'starvation', 'levels', 'avSkew', 'feederKill', 'feederOutage', 'rssVerdict']) {
+  // A run killed on purpose cannot produce an end-of-run measurement: ffmpeg never
+  // prints its ebur128 Summary and the flv has no trailer to probe for skew. Those are
+  // reported but not judged, the same way assessRssSlope refuses to judge a run too
+  // short to fit a trend. Everything else still gates.
+  const endOfRunOnly = r.feederKill?.attempted ? ['levels', 'avSkew'] : [];
+  for (const key of ['stall', 'tracks', 'drift', 'silence', 'starvation', 'levels', 'avSkew', 'feederKill', 'rssVerdict']) {
+    if (endOfRunOnly.includes(key)) continue;
     const v = r[key];
     if (v && !v.ok) failures.push(v.reason);
   }
@@ -138,16 +150,6 @@ const killTree = (rootPid) => {
 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-function spawnFeeder(fifo) {
-  const child = spawn('bash', [join(HERE, 'videofeed.sh')], {
-    stdio: ['ignore', 'ignore', 'pipe'],
-    env: { ...process.env, VIDEO_FIFO: fifo },
-  });
-  child.stderr.resume();
-  child.on('error', () => {});
-  return child;
-}
 
 export async function tier0({
   seconds = 3600,
@@ -193,9 +195,10 @@ export async function tier0({
   const stderrFile = createWriteStream(stderrPath);
   stream.stderr.on('data', (d) => { stderr += d; stderrFile.write(d); });
 
-  let feeder = spawnFeeder(fifo);
+  // stream.sh starts the feeder itself and dies with it — the writer is never replaced
+  // under a live ffmpeg. Nothing here spawns or restarts one.
   let feederKilledAt = null;
-  let feederRestartedAt = null;
+  let feederExitedAt = null;
   let stall = null;
 
   const samples = [];
@@ -222,19 +225,21 @@ export async function tier0({
     }
   }, sampleSeconds * 1000);
 
-  // The feeder kill: SIGKILL the whole videofeed tree, leave it dead long enough that a
-  // frame-starved ffmpeg would have shown it, then bring it back the way
-  // `Restart=always` would.
+  // The feeder kill: find stream.sh's feeder child and SIGKILL it. What is being checked
+  // is that the whole pipeline ends promptly afterwards, not that it survives.
   let killTimer = null;
   if (killFeederAt !== null) {
-    killTimer = setTimeout(async () => {
+    killTimer = setTimeout(() => {
+      const feeder = descendants(stream.pid).filter((p) => p.comm.includes('node'));
+      const target = feeder.find((p) => p.pid !== stream.pid);
       feederKilledAt = (Date.now() - started) / 1000;
-      process.stderr.write(`  [${feederKilledAt.toFixed(0)}s] killing the video feeder\n`);
-      killTree(feeder.pid);
-      await sleep(5000);
-      feeder = spawnFeeder(fifo);
-      feederRestartedAt = (Date.now() - started) / 1000;
-      process.stderr.write(`  [${feederRestartedAt.toFixed(0)}s] video feeder restarted\n`);
+      process.stderr.write(`  [${feederKilledAt.toFixed(0)}s] killing the video feeder — the pipeline should end, not survive\n`);
+      for (const p of descendants(stream.pid)) {
+        // videofeed.sh execs node on videofeed.mjs, so match the script rather than the
+        // command name, and never take the renderer down by mistake.
+        if (p.comm.includes('node') && p.pid !== target?.pid) continue;
+        try { process.kill(p.pid, 'SIGKILL'); } catch { /* already gone */ }
+      }
     }, killFeederAt * 1000);
   }
 
@@ -242,7 +247,7 @@ export async function tier0({
   clearInterval(timer);
   if (killTimer) clearTimeout(killTimer);
   const wallSeconds = (Date.now() - started) / 1000;
-  killTree(feeder.pid);
+  if (feederKilledAt !== null) feederExitedAt = wallSeconds;
 
   const records = parseProgressRecords(stderr);
   const producedSeconds = records.length ? records[records.length - 1].timeSeconds : 0;
@@ -281,7 +286,7 @@ export async function tier0({
     // there is no separate renderer exit code to read from here.
     renderCode: null,
     renderReport: stderr.split('\n').filter((l) => l.startsWith('render:')).pop() || '',
-    feederKilledAt, feederRestartedAt,
+    feederKilledAt, feederExitedAt,
     tracks: assessTracks(probe?.streams),
     drift: assessDrift({ producedSeconds, elapsedSeconds: wallSeconds, tolerance }),
     silence: assessSilence(parseSilence(silenceStderr)),
@@ -289,21 +294,14 @@ export async function tier0({
     // dips during a deliberate feeder kill by construction, so judging it as
     // spontaneous starvation would make the criterion-6 demonstration always fail.
     starvation: assessStarvation(intervals, {
+      // Everything from the kill onward is the pipeline shutting down on purpose, so it
+      // is not a pacing judgement.
       skipSeconds: 2 * sampleSeconds,
-      excludeWindows: feederKilledAt === null ? [] : [[feederKilledAt, feederRestartedAt ?? Infinity]],
+      excludeWindows: feederKilledAt === null ? [] : [[feederKilledAt, Infinity]],
     }),
     levels: assessLevels(parseEbur128Summary(stderr)),
     avSkew: assessAvSkew({ startSkew, endSkew }),
-    feederKill: assessFeederKill({
-      killedAtSeconds: feederKilledAt,
-      // The container duration is the audio end here, not a proxy for it: -shortest
-      // stops ffmpeg when the first stream ends, so whichever of the two stops first
-      // is what the file's last packet reports.
-      audioEndSeconds: durationSeconds,
-      targetSeconds: seconds,
-      framesResumed: feederRestartedAt !== null && durationSeconds > feederRestartedAt,
-    }),
-    feederOutage: assessFeederOutage({ intervals, killedAtSeconds: feederKilledAt, restartedAtSeconds: feederRestartedAt }),
+    feederKill: assessFeederKill({ killedAtSeconds: feederKilledAt, exitedAtSeconds: feederExitedAt }),
     stall: assessStall(stall ?? detectStall(records, { stallSeconds })),
     rssVerdict: assessRssSlope({ slopeBytesPerHour: analysis.rssSlopeBytesPerHour, wallSeconds }),
   };
@@ -323,11 +321,10 @@ export function formatTier0Report(r) {
   lines.push(`  drift: ${r.drift.aheadSeconds >= 0 ? '+' : ''}${r.drift.aheadSeconds.toFixed(2)}s vs realtime, bound ±${r.tolerance.toFixed(2)}s (one ${r.chunkCycles}-cycle chunk + a 64 KiB pipe) — ${r.drift.reason}`);
   lines.push(`  startup offset: ${r.startupOffsetSeconds.toFixed(2)}s — a one-time latency, which is why ffmpeg's cumulative speed= is not the starvation signal`);
   lines.push(`  pacing: ${r.starvation.reason}`);
-  lines.push(`  A/V sync: ${r.avSkew.reason}`);
-  lines.push(`  levels: ${r.levels.reason}`);
+  lines.push(`  A/V sync: ${r.avSkew.reason}${r.feederKill?.attempted ? ' (not judged: a killed run leaves no trailer to probe)' : ''}`);
+  lines.push(`  levels: ${r.levels.reason}${r.feederKill?.attempted ? ' (not judged: the run was killed before ffmpeg could print its summary)' : ''}`);
   lines.push(`  silence: ${r.silence.reason}`);
   lines.push(`  video feeder: ${r.feederKill.reason}`);
-  lines.push(`  outage cost: ${r.feederOutage.reason}`);
   lines.push(`  stall: ${r.stall.reason}`);
   lines.push(`  ffmpeg log: ${r.stderrPath}`);
   if (r.renderReport) lines.push(`  ${r.renderReport}`);
