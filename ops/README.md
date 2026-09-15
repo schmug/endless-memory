@@ -131,12 +131,8 @@ Two consequences:
   frozen timestamp. Before that fix the harness waited on process exit, so the one
   failure that mattered most was the one it could not report.
 
-**The cause is not identified and the wedge is not deterministic.** It has been seen
-once. A 2-minute run, a 6-minute run, and a full 60-minute run that killed the feeder at
-the same 1800s mark all recovered cleanly — the hour dipped pacing to 0.749x during the
-outage and was back above the 0.97 floor by 1821s. One occurrence in three attempts at
-that shape is not a reason to treat the pipeline as sound: the failure was observed, it
-is invisible to process liveness, and nothing here explains it. Two
+**The cause was chased on 2026-09-15 and is now understood.** It is reproducible in about
+a minute, and it is not what it looked like. See "The wedge: what triggers it" below. Two
 candidates, with nothing yet separating them: `-shortest`, added this session on the
 strength of finding 1; and the `fps=30` filter or `-re` on `image2pipe` mishandling a gap
 in frame arrivals. If `-shortest` turns out to be the cause, there is a real tension to
@@ -145,6 +141,79 @@ resolve — it is also the only thing that makes renderer death detectable.
 The 120s stall threshold is borrowed from the spec's "`speed` outside band for 2 minutes"
 alert. It was not derived from how long a legitimate feeder outage can freeze the clock;
 the only data point is that a 5-second outage froze it for under 10 seconds.
+
+## The wedge: what triggers it, 2026-09-15
+
+Reproduced with a stress harness that kills and restarts `videofeed` every 15-20 s
+instead of waiting an hour per data point. The baseline wedges within about a minute,
+which is what made any of the rest of this measurable.
+
+### The signature
+
+Always identical, measured at the boundary with dense sampling:
+
+| | feeder writes | ffmpeg reads | output clock |
+|---|---|---|---|
+| before | 2.00 fps | 2.00 fps | 1.00 s/s |
+| after, sustained | 4.00 fps | 4.00 fps | **0.00 s/s** |
+
+On the far side of a feeder replacement, ffmpeg stops pacing the video input and reads
+at whatever rate the writer supplies. Video PTS then advances at 2x realtime, runs away
+from audio (`pts 39.500` against audio's `pts 31.915`), the muxer cannot interleave, the
+audio demuxer stalls behind a full queue with a lag that grows every cycle, and every
+thread ends in `__psynch_cvwait`.
+
+### What it is NOT
+
+Each of these was ablated, not reasoned about. Trial number is where the wedge appeared;
+all six configurations wedge.
+
+| variant | result |
+|---|---|
+| baseline | trial 3 |
+| `-use_wallclock_as_timestamps 1` on the video input | trial 7 |
+| wallclock timestamps AND no `-re` on the video input | trial 11 |
+| `-shortest` removed | trial 2 |
+| restart gap cut from 5 s to 0.5 s | trial 2 |
+| **`SIGSTOP`/`SIGCONT` the same feeder process** | **15 trials, no wedge** |
+
+So it is not `-shortest`; not `-re` on the video input; not index-derived versus
+wallclock timestamps; not the length of the gap; and not a truncated PNG — `videofeed`
+was measured writing complete frames even when told to stop at a frame boundary, and
+those clean exits wedge too.
+
+### What it IS
+
+**Replacing the process that writes the fifo.** Pausing the same process and resuming it
+never wedges, across 15 trials; replacing it wedges within one or two, whatever the gap
+length and whatever the flags. Both disturbances starve ffmpeg identically during the
+outage (read drops to 0.50 fps in each). The difference is entirely on the far side: a
+paused writer's return leaves `-re` throttling at 2 fps, a replaced writer's return
+leaves it reading flat out at 4.
+
+### What that means for the design
+
+**`Restart=always` on `endless-memory-videofeed.service` is actively harmful.** The
+holder fd stops ffmpeg seeing EOF, which is what keeps the broadcast alive across a
+feeder restart — but the restart then wedges the pipeline into dead air that no
+host-local liveness check can see. A unit that restarts a crashed feeder is a unit that
+converts a recoverable fault into an unrecoverable one.
+
+The spec's criterion 6 — "videofeed is killed during the run and the broadcast does not
+end ... and the unit restarts and resumes feeding" — is **not achievable with this seam
+as designed**, and the hour-long run that appeared to pass it passed by luck.
+
+Note what this does *not* threaten: piece D is decoupled by the **file interface**
+(`videofeed` reads a path), not by `videofeed` being its own systemd unit. Piece D can
+crash, stall, or write rubbish without the fifo's writer ever being replaced. The
+separate unit buys nothing for piece D and costs this failure mode.
+
+Unresolved, and left for a decision rather than guessed at: whether to fold `videofeed`
+into the stream unit so a feeder fault restarts the whole pipeline (cheap: the spec puts
+a restart at ~2-3 s, and scene index is derived from absolute time so the music resumes
+in the right place), or to keep two units and have a feeder failure trigger a stream
+restart. Either way the rule is the same: **never replace the fifo's writer under a live
+ffmpeg.**
 
 ## Two things verified rather than asserted, 2026-09-14
 
