@@ -511,9 +511,9 @@ attached — to the production input, which by then has never carried a test fra
 ## Tier 0, measured — 2026-09-14
 
 Implemented in `ops/`; see `ops/README.md` for the runbook. Everything below was
-measured on a dev machine against ffmpeg 8.0 and a local file sink. **This is not
-criterion 2**, which asks for an hour on the production host; it is the flag validation
-tier 0 exists to provide.
+measured on a dev machine against ffmpeg 8.0 and a local file sink. Criterion 2 asks for
+an hour to a local sink and is met below; criterion 1 additionally asks for `npm run
+realtime` on the **production host**, which does not exist yet and is still unmet.
 
 Three things in this document turned out to be wrong or incomplete. They are corrected
 here rather than edited in place above, so the change is visible.
@@ -572,22 +572,36 @@ rather than hanging on it.
 
 ### Figures
 
-From the 6-minute run, feeder killed at 120 s (`npm run tier0 -- --minutes 6
---kill-feeder-at 120`):
+**Acceptance criterion 2 is met.** `npm run tier0 -- --minutes 60 --kill-feeder-at 1800`,
+one hour to a local sink, video feeder killed at the half hour:
 
 | measure | result |
 |---|---|
 | tracks | h264 1280x720 + aac 48000 Hz 2ch, one ffmpeg invocation |
-| drift | −10.45 s against the ±25.60 s bound `driftTolerance()` derives |
+| audio | 1.000 h produced in 1.003 h wall |
+| drift | −10.44 s against the ±25.60 s bound `driftTolerance()` derives |
 | startup offset | 8.77 s, one-time |
-| pacing | 33 intervals past warm-up, slowest 0.999x, floor 0.97 |
+| pacing | 357 intervals past warm-up, slowest 0.998x, floor 0.97 |
 | A/V skew | +0.047 s at the start, −0.012 s at the end; grew −0.059 s |
-| levels | −19.9 LUFS, LRA 1.0 LU, true peak −4.3 dBFS (source: −20.0 / −4.3) |
+| levels | −19.8 LUFS, LRA 1.0 LU, true peak −4.1 dBFS (source: −20.0 / −4.3) |
 | silence | none |
-| feeder kill | audio ran on to 360.1 s; outage dipped pacing to 0.822x, recovered by 140 s |
+| feeder kill | audio ran on to 3600.1 s; outage dipped pacing to 0.749x, recovered by 1821 s |
+| ffmpeg RSS | +1.059 MB/h, within the 2.0 MB/h endurance threshold |
+
+The criterion's three terms: A/V sync drift is stated at both ends and did not grow;
+ffmpeg's RSS is flat at about 353 MB with a slope inside the threshold `endurance.mjs`
+already uses for the renderer; and no interval outside the induced outage fell below
+0.97. The 0.749x dip is the deliberate feeder kill and is reported as its own figure —
+the measured cost of a video outage to the audio — rather than folded into starvation.
 
 Levels agree with the source figures recorded above, which is the evidence that the
 `asplit` leg reaching the encoder is unaltered.
+
+**The wedge did not reproduce.** This hour ran the same kill at the same 1800 s mark as
+the run that deadlocked, and its output clock advanced throughout. One occurrence in
+three attempts at that shape, cause still unidentified. It is not a reason to treat the
+pipeline as sound: the failure was observed, it is undetectable by process liveness, and
+nothing here explains it.
 
 ## Constraints
 

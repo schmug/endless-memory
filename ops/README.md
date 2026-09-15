@@ -131,9 +131,12 @@ Two consequences:
   frozen timestamp. Before that fix the harness waited on process exit, so the one
   failure that mattered most was the one it could not report.
 
-**The cause is not identified and the wedge is not deterministic.** A 2-minute run and a
-6-minute run with the same feeder kill both recovered cleanly (the 6-minute one dipped
-pacing to 0.822x during the outage and was back above the 0.97 floor by 140s). Two
+**The cause is not identified and the wedge is not deterministic.** It has been seen
+once. A 2-minute run, a 6-minute run, and a full 60-minute run that killed the feeder at
+the same 1800s mark all recovered cleanly — the hour dipped pacing to 0.749x during the
+outage and was back above the 0.97 floor by 1821s. One occurrence in three attempts at
+that shape is not a reason to treat the pipeline as sound: the failure was observed, it
+is invisible to process liveness, and nothing here explains it. Two
 candidates, with nothing yet separating them: `-shortest`, added this session on the
 strength of finding 1; and the `fps=30` filter or `-re` on `image2pipe` mishandling a gap
 in frame arrivals. If `-shortest` turns out to be the cause, there is a real tension to
