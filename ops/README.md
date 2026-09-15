@@ -146,6 +146,61 @@ The 120s stall threshold is borrowed from the spec's "`speed` outside band for 2
 alert. It was not derived from how long a legitimate feeder outage can freeze the clock;
 the only data point is that a 5-second outage froze it for under 10 seconds.
 
+## Two things verified rather than asserted, 2026-09-14
+
+### The fifo holder fd is what keeps a feeder restart from ending the broadcast
+
+Not inference from the spec — the ablation was run. A scratch copy of `stream.sh` with
+**only** `exec 3<>"$VIDEO_FIFO"` removed, against the same `videofeed.sh`, same kill at
+30 s:
+
+```
+[noholder] killing the video feeder at 30s
+[noholder] PIPELINE ENDED 33s after start — the feeder took the broadcast with it
+[holder]   killing the video feeder at 30s
+[holder]   PIPELINE STILL RUNNING 75s after start — the broadcast survived the feeder dying
+```
+
+ffmpeg's own account of the no-holder run:
+
+```
+[png @ ...] chunk too big
+[vist#0:0/png @ ...] [dec:png @ ...] Decoding error: Invalid data found when processing input
+[out#0/flv @ ...] Output file is empty, nothing was encoded
+```
+
+Two things in that: the SIGKILL left a truncated PNG in the fifo, which ffmpeg logged and
+survived; and then the last writer closing delivered EOF, which it did not. Reproduce by
+removing the one line.
+
+### `systemd-analyze verify` found a bug the text tests could not
+
+The units were checked against real systemd (252) in a Debian container, and it reported:
+
+```
+endless-memory-stream.service:30: Unknown key 'StartLimitIntervalSec' in section [Service], ignoring.
+```
+
+`StartLimitIntervalSec` moved from `[Service]` to `[Unit]` in systemd v229. In `[Service]`
+it is **ignored**, and the unit silently falls back to the default limit — five restarts
+in ten seconds, then systemd gives up. Both units carried it in the wrong section, and
+`ops/units.test.mjs` passed the whole time because it asserted the line existed without
+asserting which section it was in. The unit would have looked correct in every text
+assertion while doing the one thing this design forbids: giving up, into permanent dead
+air.
+
+Fixed, and the test is now section-aware and was watched failing against the old
+placement. Both units now verify clean. Re-check with:
+
+```sh
+docker run --rm -v "$PWD/ops:/units:ro" node:22-slim bash -c \
+  'apt-get -qq update >/dev/null && apt-get -qq install -y systemd >/dev/null &&
+   systemd-analyze verify /units/endless-memory-stream.service /units/endless-memory-videofeed.service'
+```
+
+A text assertion over a config file is a proxy for the parser that actually reads it. Where
+the real parser can be run, run it.
+
 ## Levels: measured, not corrected
 
 Reproduce rather than trust:

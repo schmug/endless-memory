@@ -6,6 +6,15 @@
 
 [Unit]
 Description=Endless Memory — render and push the broadcast
+# NO start limit. A start limit makes systemd give up after a burst, and for a 24/7
+# station permanent dead air is strictly worse than a restart loop. Crash-looping is
+# caught by alerting, not by refusing to restart.
+#
+# This key belongs to [Unit], NOT [Service]: systemd moved it in v229, and systemd 252
+# reports it in [Service] as "Unknown key ... ignoring" and silently applies the
+# default limit — five restarts in ten seconds, then it gives up. It was in the wrong
+# section here until `systemd-analyze verify` was actually run on 2026-09-14.
+StartLimitIntervalSec=0
 After=network-online.target time-sync.target
 Wants=network-online.target
 
@@ -24,10 +33,6 @@ EnvironmentFile=/etc/endless-memory/stream.env
 
 Restart=always
 RestartSec=2
-# NO start limit. A start limit makes systemd give up after a burst, and for a 24/7
-# station permanent dead air is strictly worse than a restart loop. Crash-looping is
-# caught by alerting, not by refusing to restart.
-StartLimitIntervalSec=0
 
 # /run/endless-memory, where the video fifo lives. Preserved so the fifo survives this
 # unit restarting while videofeed keeps writing to it.

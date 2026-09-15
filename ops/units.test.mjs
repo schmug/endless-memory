@@ -9,10 +9,29 @@ const VIDEOFEED = unit('endless-memory-videofeed.service');
 // A start limit makes systemd GIVE UP after a burst of restarts. For a 24/7 station
 // permanent dead air is strictly worse than a restart loop, so the unit must keep
 // trying forever; crash-looping is caught by alerting, not by refusing to restart.
+// The section matters, and an earlier version of this test missed that. systemd moved
+// StartLimitIntervalSec from [Service] to [Unit] in v229; systemd 252 reports it in
+// [Service] as "Unknown key ... ignoring" and applies the DEFAULT limit instead — five
+// restarts in ten seconds and then it gives up. The unit would have looked correct in
+// every text assertion while doing the one thing the spec forbids. Caught by
+// `systemd-analyze verify` in a Debian container, not by reading.
+function section(text, name) {
+  const lines = [];
+  let inside = false;
+  for (const line of text.split('\n')) {
+    if (/^\[.+\]$/.test(line.trim())) { inside = line.trim() === `[${name}]`; continue; }
+    if (inside) lines.push(line);
+  }
+  return lines.join('\n');
+}
+
 test('neither unit is allowed to give up restarting', () => {
   for (const [name, text] of [['stream', STREAM], ['videofeed', VIDEOFEED]]) {
-    assert.match(text, /^Restart=always$/m, `${name} does not restart always`);
-    assert.match(text, /^StartLimitIntervalSec=0$/m, `${name} has a start limit and would give up`);
+    assert.match(section(text, 'Service'), /^Restart=always$/m, `${name} does not restart always`);
+    assert.match(section(text, 'Unit'), /^StartLimitIntervalSec=0$/m,
+      `${name}: StartLimitIntervalSec=0 is not in [Unit], so systemd ignores it and applies the default start limit`);
+    assert.doesNotMatch(section(text, 'Service'), /StartLimitIntervalSec/,
+      `${name}: StartLimitIntervalSec is in [Service], where systemd ignores it`);
   }
 });
 
