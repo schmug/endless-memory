@@ -214,6 +214,16 @@ already held across five consecutive successful fetches (~5 minutes), treat the 
 frozen** regardless of what HTTP claims, and fall through the ladder as though the fetch
 had failed.
 
+**A repeated frame never refreshes the age.** The five-fetch run is the confidence
+threshold for *declaring* the camera frozen; it is **not** a grace period during which
+repeats count as fresh. The age always dates from the last frame whose bytes actually
+differed. This distinction is not cosmetic: simulating the ladder against the recorded
+south-camera frames showed that the naive version — advance the age on every successful
+fetch, then latch `frozen` at five — keeps captioning the picture **`live` for five
+minutes after the camera has already stopped**, off a frame it already held. Detecting a
+frozen camera cannot be faster than a few identical frames, but claiming freshness for
+frames already known to be repeats is a choice, and the wrong one.
+
 **The ground truth, if the hash test ever proves insufficient, is the burned-in
 timestamp** — which sits in the top band that the trademark crop removes. The overlay this
 spec is legally required to delete is the only thing in the frame that proves the frame is
@@ -634,7 +644,11 @@ ops/endless-memory-videoframe.service
    same JPEG repeatedly, the renderer declares the source frozen within five fetches and
    falls through the ladder, rather than broadcasting a still picture captioned live. This
    is testable offline against the recorded south-camera frames, which are a real
-   instance rather than a synthetic one.
+   instance rather than a synthetic one. **The specific regression to test for is the age
+   accounting**: assert that the caption stops claiming `live` no later than six minutes
+   after the last genuinely *different* frame — not six minutes after the last successful
+   fetch. A harness driving the ladder off an injectable clock runs the whole hour in
+   well under a second, so there is no excuse for leaving this untested.
 7. **Piece D cannot take the station off the air.** During a piece E tier-2 run, piece D's
    process is killed. The broadcast does not end; the picture freezes; the unit restarts
    and resumes. This is piece E's criterion 6 re-run with a real frame source instead of a
