@@ -47,7 +47,7 @@ Remaining project pieces, none of which this slice builds:
 |---|---|---|
 | B | Live environment feed (NWS observations + CO-OPS tides → journal events) | raw data pulled, location undecided |
 | C | Audio runtime — continuous multi-hour audio, unattended | unproven, riskiest |
-| D | Visual layer — the part that rewards occasional attention | not designed |
+| D | Visual layer — the part that rewards occasional attention | specified 2026-09-14; not built |
 | E | Broadcast and ops — RTMP, levels, monitoring, restart recovery | specified 2026-09-13; not built |
 | F | Listener interaction — "remember this" from chat | deferred by design |
 
