@@ -1,0 +1,50 @@
+# The render -> ffmpeg pipeline. Install to /etc/systemd/system/.
+#
+# The renderer and ffmpeg are ONE unit, never two: the pipe couples their lifetimes, and
+# supervising them separately would produce a half-dead pipeline systemd believes is
+# healthy. See ops/README.md.
+
+[Unit]
+Description=Endless Memory — render and push the broadcast
+# NO start limit. A start limit makes systemd give up after a burst, and for a 24/7
+# station permanent dead air is strictly worse than a restart loop. Crash-looping is
+# caught by alerting, not by refusing to restart.
+#
+# This key belongs to [Unit], NOT [Service]: systemd moved it in v229, and systemd 252
+# reports it in [Service] as "Unknown key ... ignoring" and silently applies the
+# default limit — five restarts in ten seconds, then it gives up. It was in the wrong
+# section here until `systemd-analyze verify` was actually run on 2026-09-14.
+StartLimitIntervalSec=0
+After=network-online.target time-sync.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=endless
+Group=endless
+WorkingDirectory=/opt/endless-memory
+
+# pipefail so a renderer failure fails the unit even though ffmpeg exits 0 on EOF.
+ExecStart=/bin/bash -o pipefail /opt/endless-memory/ops/stream.sh
+
+# Mode 0600, owned by the service user. Carries CF_STREAM_KEY and nothing else needs to.
+# The RTMPS URL is assembled inside stream.sh, so journald records the shape, not a key.
+EnvironmentFile=/etc/endless-memory/stream.env
+
+Restart=always
+RestartSec=2
+
+# /run/endless-memory, where the video fifo lives. Preserved so the fifo survives this
+# unit restarting while videofeed keeps writing to it.
+RuntimeDirectory=endless-memory
+RuntimeDirectoryPreserve=yes
+RuntimeDirectoryMode=0750
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+
+[Install]
+WantedBy=multi-user.target

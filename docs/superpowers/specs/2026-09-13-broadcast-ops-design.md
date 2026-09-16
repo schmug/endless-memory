@@ -1,7 +1,9 @@
 # Broadcast and ops (piece E) — design
 
 Date: 2026-09-13
-Status: specified, not implemented
+Status: tier 0 implemented 2026-09-14 (`ops/`, `npm run tier0`); tiers 1-3 unbuilt,
+and blocked on a host that does not exist yet. See "Tier 0, measured" below —
+it corrects three things in this document.
 
 ## Problem
 
@@ -505,6 +507,150 @@ end-to-end acceptance test, and the only tier where YouTube is involved at all.
 
 Only after tier 2 passes does a Live Output pointed at the public destination get
 attached — to the production input, which by then has never carried a test frame.
+
+## Tier 0, measured — 2026-09-14
+
+Implemented in `ops/`; see `ops/README.md` for the runbook. Everything below was
+measured on a dev machine against ffmpeg 8.0 and a local file sink. Criterion 2 asks for
+an hour to a local sink and is met below; criterion 1 additionally asks for `npm run
+realtime` on the **production host**, which does not exist yet and is still unmet.
+
+Three things in this document turned out to be wrong or incomplete. They are corrected
+here rather than edited in place above, so the change is visible.
+
+### `-shortest` is required, and was missing
+
+"The renderer and ffmpeg are one unit... if the renderer exits, ffmpeg sees EOF" is true
+of the audio input and false of the pipeline. The **video** input is infinite, so ffmpeg
+does not exit when the renderer dies. Measured: renderer `kill -9`'d 25 s into a run,
+ffmpeg still encoding silent video 60 s later with no sign of stopping. The pipeline
+never exits, so `pipefail` never fires and `Restart=always` never fires — systemd holds a
+green unit over permanent dead air. With `-shortest`, the same kill ended the pipeline in
+2 s. `-shortest` alters no samples; it decides when ffmpeg stops, not what it encodes.
+
+### `speed` is cumulative, and would fire the dead-air alert on every restart
+
+ffmpeg takes a fixed ~8 s to bring the `image2pipe` input up (the renderer is not the
+cause: a cold `render.mjs` produces its first 8-cycle chunk in 0.18 s, and no audio is
+lost because the renderer blocks on a full pipe). The printed `speed=` is cumulative, so
+that offset reads as 0.13x at 10 s, 0.79x at 40 s and 0.94x at two minutes on a run
+pacing at exactly 1.000x throughout.
+
+The monitoring table's "`speed` outside 0.97–1.03 for 2 minutes" would therefore alert on
+every restart, which is every journal change. The signal has to be the **interval** speed
+between consecutive progress records (`ops/measure.mjs`'s `intervalSpeeds()`).
+
+### The in-graph `ebur128` yields no continuous loudness signal
+
+`ebur128` prints its Summary **once, at the end of a run**, at `AV_LOG_INFO` — and a
+24/7 stream has no end. `-loglevel warning` suppresses the block entirely, and
+`framelog=verbose` means "log at `AV_LOG_VERBOSE`", one level *below* info, so the
+per-frame lines are suppressed too. The monitoring table's "integrated loudness |
+in-graph `ebur128`" row is currently unobtainable. Unresolved; `ametadata=print` at a
+sane interval is the untried candidate.
+
+### The failure this design had no answer for: a wedge
+
+31 minutes into a 60-minute run, 90 s after the video feeder was SIGKILLed and restarted,
+ffmpeg's output clock froze at 1791 s and never moved again. Every ffmpeg thread — both
+demuxers, the filter chain, both encoders, the muxer — sat in `__psynch_cvwait`; nothing
+was blocked on a pipe read, the feeder was writing normally, and ffmpeg had consumed
+everything it wrote. RSS crept 350.3 → 352.2 MB behind the wedge. Every process stayed
+alive, so nothing exited and none of `pipefail`, `-shortest` or `Restart=always` fired.
+
+This reorders the monitoring design. Host-local signals are described above as "a
+refinement of *why*, after the Worker has already answered *whether*". Against a wedge
+the off-host Worker is the **only** thing that answers *whether*, because every
+host-local liveness check reports a healthy unit. A host-local check on **output
+progress** — ffmpeg's `time=` advancing, renderer lines arriving — does catch it, and is
+the cheap addition this finding argues for.
+
+The cause is not identified and the wedge is not deterministic: 2-minute and 6-minute runs
+with the same feeder kill both recovered. Candidates are `-shortest` and the `fps=30` /
+`-re` handling of a gap in frame arrivals. `npm run tier0` now ends and fails a wedged run
+rather than hanging on it.
+
+### Figures
+
+**Acceptance criterion 2 is met.** `npm run tier0 -- --minutes 60 --kill-feeder-at 1800`,
+one hour to a local sink, video feeder killed at the half hour:
+
+| measure | result |
+|---|---|
+| tracks | h264 1280x720 + aac 48000 Hz 2ch, one ffmpeg invocation |
+| audio | 1.000 h produced in 1.003 h wall |
+| drift | −10.44 s against the ±25.60 s bound `driftTolerance()` derives |
+| startup offset | 8.77 s, one-time |
+| pacing | 357 intervals past warm-up, slowest 0.998x, floor 0.97 |
+| A/V skew | +0.047 s at the start, −0.012 s at the end; grew −0.059 s |
+| levels | −19.8 LUFS, LRA 1.0 LU, true peak −4.1 dBFS (source: −20.0 / −4.3) |
+| silence | none |
+| feeder kill | audio ran on to 3600.1 s; outage dipped pacing to 0.749x, recovered by 1821 s |
+| ffmpeg RSS | +1.059 MB/h, within the 2.0 MB/h endurance threshold |
+
+The criterion's three terms: A/V sync drift is stated at both ends and did not grow;
+ffmpeg's RSS is flat at about 353 MB with a slope inside the threshold `endurance.mjs`
+already uses for the renderer; and no interval outside the induced outage fell below
+0.97. The 0.749x dip is the deliberate feeder kill and is reported as its own figure —
+the measured cost of a video outage to the audio — rather than folded into starvation.
+
+Levels agree with the source figures recorded above, which is the evidence that the
+`asplit` leg reaching the encoder is unaltered.
+
+**The wedge did not reproduce.** This hour ran the same kill at the same 1800 s mark as
+the run that deadlocked, and its output clock advanced throughout. One occurrence in
+three attempts at that shape, cause still unidentified. It is not a reason to treat the
+pipeline as sound: the failure was observed, it is undetectable by process liveness, and
+nothing here explains it.
+
+## The video seam, corrected — 2026-09-15
+
+The seam above says `videofeed` is a **separate** unit, and that "that separation is the
+whole decoupling from piece D". Building it and then attacking it showed both halves of
+that to be wrong.
+
+**Replacing the process that writes the fifo wedges ffmpeg.** On the far side of a feeder
+replacement, ffmpeg stops pacing the video input and reads at the writer's full rate;
+video PTS runs away from audio, the muxer cannot interleave, and every thread parks in
+`__psynch_cvwait` with the output clock frozen. Nothing exits, so `pipefail`, `-shortest`
+and `Restart=always` are all silent, and a host-local liveness check sees a healthy unit
+over dead air.
+
+Six configurations were ablated; the trial number is where the wedge appeared under a
+stress harness killing the feeder every 15-20 s:
+
+| variant | result |
+|---|---|
+| as specified | trial 3 |
+| `-use_wallclock_as_timestamps 1` on the video input | trial 7 |
+| wallclock timestamps AND no `-re` on the video input | trial 11 |
+| `-shortest` removed | trial 2 |
+| restart gap cut from 5 s to 0.5 s | trial 2 |
+| `SIGSTOP`/`SIGCONT` the same feeder process | 15 trials, no wedge |
+
+So it is not `-shortest`, not `-re` on the video input, not index-versus-wallclock
+timestamps, not the gap length, and not a truncated PNG. It is replacing the writer.
+
+**Two corrections follow.**
+
+1. **`videofeed` is not a separate unit.** `ops/stream.sh` starts it and the two die
+   together; a feeder fault fails the unit and systemd restarts all three. Restarting is
+   cheap for exactly the reason "Supervision and restart recovery" already gives: scene
+   index is derived from absolute time, so the music resumes at the right moment.
+
+2. **What decouples piece D is the file interface, not the unit boundary.** `videofeed`
+   reads a path; piece D can crash, stall, or write rubbish without the fifo's writer
+   ever being replaced. The separate unit bought nothing for piece D and cost this
+   failure mode. The seam's three properties are otherwise unchanged, and the contract
+   piece D must meet is still the same one sentence.
+
+**Acceptance criterion 6 is therefore replaced.** It asked that killing `videofeed` leave
+the broadcast running and the unit restart and resume feeding. That is unachievable, and
+the hour-long tier-0 run that appeared to satisfy it did so by luck. The criterion is now
+the opposite, and is met: **killing the feeder must END the pipeline promptly**, so
+systemd restarts it whole. Measured 2026-09-15 — feeder killed at 90.1 s, pipeline ended
+1.0 s later. `ops/supervision.test.mjs` holds it in `npm test`; `npm run tier0 --
+--kill-feeder-at N` is the same check against real ffmpeg.
 
 ## Constraints
 
