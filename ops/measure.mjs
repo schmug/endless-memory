@@ -77,6 +77,17 @@ export function assessLevels(levels) {
 // starvation. 0.97 is the spec's alert floor.
 export const STARVATION_FLOOR = 0.97;
 
+// And the spec's condition is `speed` outside 0.97-1.03 FOR TWO MINUTES, not for one
+// sample. The duration is not incidental — it is what separates a starving muxer from
+// the jitter of pairing two clocks read at slightly different moments.
+//
+// Measured over two clean 60-minute runs, 2026-09-15: 359 intervals each, median exactly
+// 1.000, and exactly ONE interval below the floor in each — every one of them preceded by
+// a compensating overshoot that cancels it (1.034 then 0.969 sums to 2.003 over 20s;
+// 1.032 then 0.967 sums to 1.999). An implementation that judged single intervals failed
+// both runs on that artifact. The floor is unchanged; the missing requirement is restored.
+export const SUSTAINED_STARVATION_SECONDS = 120;
+
 // ffmpeg's own `speed=` is CUMULATIVE. Observed 2026-09-14: ffmpeg takes a fixed ~8s to
 // bring the image2pipe input up, and the cumulative figure therefore climbs 0.13 → 0.79
 // → 0.94 over two minutes of a run that is pacing at exactly 1.000x throughout. Reading
@@ -127,16 +138,47 @@ const overlaps = (interval, [from, to]) => interval.fromSeconds < to && interval
 // as spontaneous starvation would make the criterion-6 demonstration always fail, and
 // swallowing it would hide the one number that says what a picture problem costs the
 // audio. So it is excluded here and measured by assessFeederOutage instead.
-export function assessStarvation(intervals, { floor = STARVATION_FLOOR, skipSeconds = 0, excludeWindows = [] } = {}) {
+// The longest unbroken stretch below the floor, in seconds of wall clock.
+function longestDip(judged, floor) {
+  let best = { seconds: 0, fromSeconds: NaN, toSeconds: NaN };
+  let run = null;
+  for (const i of judged) {
+    if (i.speed < floor) {
+      // Contiguity is by adjacency in the judged list: a gap in sampling ends the run.
+      run = run && run.toSeconds === i.fromSeconds
+        ? { fromSeconds: run.fromSeconds, toSeconds: i.toSeconds }
+        : { fromSeconds: i.fromSeconds, toSeconds: i.toSeconds };
+      const seconds = run.toSeconds - run.fromSeconds;
+      if (seconds > best.seconds) best = { seconds, ...run };
+    } else {
+      run = null;
+    }
+  }
+  return best;
+}
+
+export function assessStarvation(intervals, {
+  floor = STARVATION_FLOOR, skipSeconds = 0, excludeWindows = [],
+  sustainedSeconds = SUSTAINED_STARVATION_SECONDS,
+} = {}) {
   const judged = intervals.filter((i) => i.fromSeconds >= skipSeconds && !excludeWindows.some((w) => overlaps(i, w)));
   if (!judged.length) {
     return { ok: false, assessed: false, reason: `no pacing interval past the ${skipSeconds}s warm-up window — the run produced nothing to judge` };
   }
   const worst = judged.reduce((a, b) => (b.speed < a.speed ? b : a));
-  if (worst.speed < floor) {
-    return { ok: false, assessed: true, worst, reason: `video starvation: pacing fell to ${worst.speed.toFixed(3)}x between ${worst.fromSeconds.toFixed(0)}s and ${worst.toSeconds.toFixed(0)}s, below the ${floor} floor` };
+  const dip = longestDip(judged, floor);
+  if (dip.seconds >= sustainedSeconds) {
+    return {
+      ok: false, assessed: true, worst, dip,
+      reason: `video starvation: pacing stayed below the ${floor} floor for ${dip.seconds.toFixed(0)}s, from ${dip.fromSeconds.toFixed(0)}s to ${dip.toSeconds.toFixed(0)}s (worst ${worst.speed.toFixed(3)}x)`,
+    };
   }
-  return { ok: true, assessed: true, worst, reason: `${judged.length} interval(s) past warm-up, slowest ${worst.speed.toFixed(3)}x, floor ${floor}` };
+  // The worst sample is always reported, whether or not it gated. A single interval under
+  // the floor is jitter, but it is not hidden.
+  const aside = worst.speed < floor
+    ? `; deepest single sample ${worst.speed.toFixed(3)}x at ${worst.fromSeconds.toFixed(0)}s, below the floor but not sustained (longest dip ${dip.seconds.toFixed(0)}s < ${sustainedSeconds}s)`
+    : '';
+  return { ok: true, assessed: true, worst, dip, reason: `${judged.length} interval(s) past warm-up, slowest ${worst.speed.toFixed(3)}x, floor ${floor}${aside}` };
 }
 
 // ---------------------------------------------------------------------------

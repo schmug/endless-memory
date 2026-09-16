@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   parseEbur128Summary, assessLevels, LOUDNESS_BAND_LUFS, MAX_TRUE_PEAK_DBFS, SOURCE_LEVELS,
   parseProgressRecords, intervalSpeeds, assessStarvation, startupOffsetSeconds,
-  STARVATION_FLOOR, skewFromPackets, assessAvSkew, GOP_SECONDS, FORBIDDEN_FILTERS,
+  STARVATION_FLOOR, SUSTAINED_STARVATION_SECONDS, skewFromPackets, assessAvSkew, GOP_SECONDS, FORBIDDEN_FILTERS,
   detectStall, assessStall,
 } from './measure.mjs';
 
@@ -116,29 +116,49 @@ test('the startup offset is reported as its own figure, not folded into drift', 
 // `speed` below 1.0 while renderer progress lines keep arriving points at VIDEO
 // STARVATION — the diagnostic the seam design makes possible, and the one way a
 // picture problem takes the station off the air.
-test('a sustained interval dip below the floor is reported as starvation', () => {
-  const intervals = [
-    { fromSeconds: 10, toSeconds: 20, speed: 1.0 },
-    { fromSeconds: 20, toSeconds: 30, speed: 0.80 },
-    { fromSeconds: 30, toSeconds: 40, speed: 0.82 },
-  ];
+test('a dip below the floor sustained past the window is reported as starvation', () => {
+  // 13 consecutive 10s intervals below the floor: 130s, past the 120s the spec requires
+  // before `speed` outside band counts as a fault.
+  const intervals = Array.from({ length: 13 }, (_, i) => ({ fromSeconds: 20 + i * 10, toSeconds: 30 + i * 10, speed: 0.80 }));
   const verdict = assessStarvation(intervals, { skipSeconds: 0 });
 
   assert.equal(verdict.ok, false);
   assert.equal(verdict.worst.speed, 0.80);
   assert.match(verdict.reason, /starv/i);
   assert.equal(STARVATION_FLOOR, 0.97);
+  assert.equal(SUSTAINED_STARVATION_SECONDS, 120);
+});
+
+// Captured from two clean 60-minute runs, 2026-09-15. Each had 359 intervals past
+// warm-up, a median of exactly 1.000, and exactly ONE below the floor — and each dip is
+// preceded by a compensating overshoot that cancels it: 1.034 then 0.969 sums to 2.003
+// over 20s, 1.032 then 0.967 sums to 1.999. That is the signature of pairing two clocks
+// sampled at slightly different moments, not of the muxer starving.
+//
+// The spec's condition is `speed` outside 0.97-1.03 FOR 2 MINUTES. This test exists
+// because the first implementation dropped the duration and failed both runs on a single
+// 10-second sample — the floor is unchanged, the missing requirement is restored.
+test('an isolated dip that the next interval cancels is jitter, not starvation', () => {
+  const hour2 = [1.000, 1.003, 1.034, 0.969, 1.013, 1.016];
+  const hour3 = [1.017, 1.032, 0.967, 1.010, 1.003, 0.975];
+
+  for (const speeds of [hour2, hour3]) {
+    const intervals = speeds.map((speed, i) => ({ fromSeconds: 20 + i * 10, toSeconds: 30 + i * 10, speed }));
+    const verdict = assessStarvation(intervals, { skipSeconds: 0 });
+
+    assert.equal(verdict.ok, true, verdict.reason);
+    // Still reported, never swallowed: the operator sees the worst sample either way.
+    assert.ok(verdict.worst.speed < STARVATION_FLOOR);
+  }
 });
 
 // The first interval covers ffmpeg's startup, where the video input is still coming up
 // and the reading means nothing. Judging it would fail every healthy run.
 test('the warm-up window is excluded rather than judged', () => {
-  const intervals = [
-    { fromSeconds: 0, toSeconds: 10, speed: 0.13 },
-    { fromSeconds: 10, toSeconds: 20, speed: 1.0 },
-  ];
+  // A long stretch of startup readings, which would be sustained starvation anywhere else.
+  const intervals = Array.from({ length: 20 }, (_, i) => ({ fromSeconds: i * 10, toSeconds: 10 + i * 10, speed: i < 15 ? 0.13 : 1.0 }));
 
-  assert.equal(assessStarvation(intervals, { skipSeconds: 10 }).ok, true);
+  assert.equal(assessStarvation(intervals, { skipSeconds: 150 }).ok, true);
   assert.equal(assessStarvation(intervals, { skipSeconds: 0 }).ok, false);
 });
 
@@ -151,24 +171,19 @@ test('a run with no assessable intervals is not reported as a pass', () => {
 // disturbance is demonstrating, not the pipeline starving on its own. Since 2026-09-15
 // the disturbance ends the run, so everything from the kill onward is a shutdown and
 // excluded; judging it would fail every criterion-6 demonstration.
-test('an interval inside a deliberately induced outage is excluded from the starvation verdict', () => {
-  const intervals = [
-    { fromSeconds: 30, toSeconds: 40, speed: 1.0 },
-    { fromSeconds: 40, toSeconds: 50, speed: 0.65 },
-    { fromSeconds: 50, toSeconds: 60, speed: 1.4 },
-  ];
+const sustainedDip = (from, count, speed) => Array.from({ length: count }, (_, i) => ({ fromSeconds: from + i * 10, toSeconds: from + 10 + i * 10, speed }));
+
+test('a sustained dip inside a deliberately induced outage is excluded from the starvation verdict', () => {
+  const intervals = [{ fromSeconds: 20, toSeconds: 30, speed: 1.0 }, ...sustainedDip(30, 14, 0.65)];
 
   assert.equal(assessStarvation(intervals, { skipSeconds: 0 }).ok, false);
-  assert.equal(assessStarvation(intervals, { skipSeconds: 0, excludeWindows: [[45, 50]] }).ok, true);
+  assert.equal(assessStarvation(intervals, { skipSeconds: 0, excludeWindows: [[30, 200]] }).ok, true);
 });
 
-test('a dip outside every excluded window still fails', () => {
-  const intervals = [
-    { fromSeconds: 30, toSeconds: 40, speed: 0.5 },
-    { fromSeconds: 40, toSeconds: 50, speed: 1.0 },
-  ];
+test('a sustained dip outside every excluded window still fails', () => {
+  const intervals = [...sustainedDip(30, 14, 0.5), { fromSeconds: 200, toSeconds: 210, speed: 1.0 }];
 
-  assert.equal(assessStarvation(intervals, { skipSeconds: 0, excludeWindows: [[45, 50]] }).ok, false);
+  assert.equal(assessStarvation(intervals, { skipSeconds: 0, excludeWindows: [[300, 400]] }).ok, false);
 });
 
 // ffprobe -show_entries packet=stream_index,pts_time -of json, captured 2026-09-14.
