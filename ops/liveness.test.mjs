@@ -299,17 +299,27 @@ test('an unknown poll outcome is rejected rather than silently ignored', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The module is pure: no transport, no filesystem, no wall clock. This mirrors
-// the guard in runtime/render.test.mjs, which scans raw source text for the
-// same reason — a claim about what the code cannot do is a claim about the
+// liveness.mjs is pure: no transport, no filesystem, no wall clock (#51). This
+// mirrors the guard in runtime/render.test.mjs, which scans raw source text for
+// the same reason — a claim about what the code cannot do is a claim about the
 // source, not about a behaviour a test can observe.
+//
+// Scoped to PURE_MODULES, not to every file in ops/. The rest of ops/ is the
+// impure broadcast layer by design: tier0.mjs spawns ffmpeg, videofeed.mjs reads
+// the clock and the filesystem, measure.mjs imports runtime/realtime.mjs. Both
+// specs place ops/ outside any purity guard —
+// docs/superpowers/specs/2026-09-13-broadcast-ops-design.md ("which the guard
+// does not and should not cover") and
+// docs/superpowers/specs/2026-09-14-visual-layer-design.md ("ops/ sits outside
+// it"). Add a module here only if it is meant to carry the same constraint.
 // ---------------------------------------------------------------------------
-test('ops modules import nothing and read no wall clock', () => {
-  const dir = new URL('.', import.meta.url);
-  const files = readdirSync(dir).filter((f) => f.endsWith('.mjs') && !f.endsWith('.test.mjs'));
-  assert.ok(files.includes('liveness.mjs'), 'the guard found the module it is guarding');
+const PURE_MODULES = ['liveness.mjs'];
 
-  for (const file of files) {
+test('the pure ops modules import nothing and read no wall clock', () => {
+  const dir = new URL('.', import.meta.url);
+  const files = readdirSync(dir);
+  for (const file of PURE_MODULES) {
+    assert.ok(files.includes(file), `the guard found ${file}`);
     const source = readFileSync(new URL(file, dir), 'utf8');
     const imports = [...source.matchAll(/\bimport\s[^;]*?['"]([^'"]+)['"]/g)].map((m) => m[1]);
     assert.deepEqual(imports, [], `${file} imports nothing`);

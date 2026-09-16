@@ -6,3 +6,10 @@ node_modules/
 endless-memory.strudel
 score-45min.json
 listen.url
+
+# Secrets never reach this repository. This is a backstop, not the reason:
+# CF_STREAM_KEY lives only in /etc/endless-memory/stream.env on the host.
+*.env
+.env*
+.dev.vars
+ops/secrets/
