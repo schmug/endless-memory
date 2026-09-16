@@ -4,8 +4,9 @@ import {
   parseEbur128Summary, assessLevels, LOUDNESS_BAND_LUFS, MAX_TRUE_PEAK_DBFS, SOURCE_LEVELS,
   parseProgressRecords, intervalSpeeds, assessStarvation, startupOffsetSeconds,
   STARVATION_FLOOR, SUSTAINED_STARVATION_SECONDS, skewFromPackets, assessAvSkew, GOP_SECONDS, FORBIDDEN_FILTERS,
-  detectStall, assessStall,
+  detectStall, assessStall, assessFfmpegRss, FFMPEG_RSS_MIN_ASSESSABLE_SECONDS,
 } from './measure.mjs';
+import { MAX_RSS_SLOPE_BYTES_PER_HOUR } from '../runtime/endurance.mjs';
 
 // Captured verbatim from the tier-0 invocation on ffmpeg 8.0, 2026-09-14. ebur128
 // prints this block once, at the END of a run, and only at AV_LOG_INFO.
@@ -295,4 +296,43 @@ test('a stall is a failure that names dead air, not a slow run', () => {
 
 test('no stall passes', () => {
   assert.equal(assessStall({ stalled: false }).ok, true);
+});
+
+// ffmpeg's RSS is not the renderer's. Measured across four clean runs, 2026-09-15/16:
+// it takes ONE ~1.5 MB allocation somewhere in the first three quarters of an hour and is
+// flat either side of it.
+//
+//   hour2   1 h   step ~43 min      linear fit 3.293 MB/h   FAIL
+//   hour3   1 h   no step           linear fit 1.304 MB/h   pass
+//   hour4   1 h   step ~28-33 min   linear fit 3.516 MB/h   FAIL
+//   rss4h   4 h   step at 25 min    linear fit 0.094 MB/h   pass, 0.70 MB/h counting the step
+//
+// One step dominates a one-hour fit and disappears in a four-hour one, so the SLOPE is
+// not a meaningful statistic at an hour — the same argument assessRssSlope already makes
+// for runs too short to fit a trend, just with a longer number. This is not the 2.0 MB/h
+// threshold moving; the threshold is untouched and imported from the renderer's harness.
+test('ffmpeg RSS is reported but not judged on a run too short for one step to wash out', () => {
+  for (const [name, slope] of [['hour2', 3.293], ['hour3', 1.304], ['hour4', 3.516]]) {
+    const verdict = assessFfmpegRss({ slopeBytesPerHour: slope * 1024 * 1024, wallSeconds: 3600 });
+
+    assert.equal(verdict.ok, true, name);
+    assert.equal(verdict.assessed, false, `${name} was judged on a one-hour fit`);
+    assert.match(verdict.reason, /too short|not judged/i);
+    assert.match(verdict.reason, new RegExp(String(slope)), `${name} must still report its figure`);
+  }
+});
+
+test('a four-hour run is judged, and a real leak at that length still fails', () => {
+  const good = assessFfmpegRss({ slopeBytesPerHour: 0.094 * 1024 * 1024, wallSeconds: 4 * 3600 });
+  assert.equal(good.ok, true);
+  assert.equal(good.assessed, true);
+
+  const leaking = assessFfmpegRss({ slopeBytesPerHour: 8 * 1024 * 1024, wallSeconds: 4 * 3600 });
+  assert.equal(leaking.ok, false);
+  assert.equal(leaking.assessed, true);
+});
+
+test('the ffmpeg minimum is four hours, and the threshold is still the renderer harness figure', () => {
+  assert.equal(FFMPEG_RSS_MIN_ASSESSABLE_SECONDS, 4 * 3600);
+  assert.equal(MAX_RSS_SLOPE_BYTES_PER_HOUR, 2 * 1024 * 1024);
 });

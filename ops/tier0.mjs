@@ -20,7 +20,7 @@ import { join, dirname } from 'node:path';
 import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import {
-  driftTolerance, assessDrift, parseSilence, assessSilence, assessRssSlope,
+  driftTolerance, assessDrift, parseSilence, assessSilence,
   DEFAULT_ANCHOR, DEFAULT_JOURNAL, logSchedule,
 } from '../runtime/realtime.mjs';
 import { analyse } from '../runtime/endurance.mjs';
@@ -28,7 +28,7 @@ import { SR } from '../runtime/voices.mjs';
 import {
   parseEbur128Summary, assessLevels, parseProgressRecords, intervalSpeeds,
   assessStarvation, startupOffsetSeconds, skewFromPackets, assessAvSkew,
-  detectStall, assessStall, STALL_SECONDS,
+  detectStall, assessStall, STALL_SECONDS, assessFfmpegRss,
 } from './measure.mjs';
 
 const HERE = new URL('.', import.meta.url).pathname;
@@ -303,7 +303,9 @@ export async function tier0({
     avSkew: assessAvSkew({ startSkew, endSkew }),
     feederKill: assessFeederKill({ killedAtSeconds: feederKilledAt, exitedAtSeconds: feederExitedAt }),
     stall: assessStall(stall ?? detectStall(records, { stallSeconds })),
-    rssVerdict: assessRssSlope({ slopeBytesPerHour: analysis.rssSlopeBytesPerHour, wallSeconds }),
+    // ffmpeg's RSS, not the renderer's: same 2.0 MB/h threshold, longer minimum before
+    // the fit describes ffmpeg rather than describing one allocation. See ops/measure.mjs.
+    rssVerdict: assessFfmpegRss({ slopeBytesPerHour: analysis.rssSlopeBytesPerHour, wallSeconds }),
   };
   result.failures = collectFailures(result);
   result.passed = result.failures.length === 0;

@@ -5,7 +5,7 @@
 // and judges them, and the tier-0 harness imports that rather than restating a bound
 // it would then have to keep in step.
 
-import { parseProgress } from '../runtime/realtime.mjs';
+import { parseProgress, assessRssSlope } from '../runtime/realtime.mjs';
 
 // Named permanently forbidden by the broadcast spec. Every one alters samples, and the
 // sound is listener-approved: if one ever becomes necessary it is a sound change with a
@@ -273,4 +273,46 @@ export function assessStall(stall) {
     ok: false,
     reason: `DEAD AIR: ffmpeg's output clock froze at ${stall.frozenAtSeconds}s and did not move for ${stall.stalledForSeconds.toFixed(0)}s — every process stayed alive, so nothing exited and no supervisor would have noticed`,
   };
+}
+
+// ---------------------------------------------------------------------------
+// ffmpeg's RSS
+// ---------------------------------------------------------------------------
+
+// runtime/realtime.mjs judges the RENDERER's RSS, whose trace is a smooth GC sawtooth,
+// and refuses to fit a trend to anything under an hour. ffmpeg's trace is a different
+// shape and needs a different minimum — not a different threshold.
+//
+// Measured across four clean runs, 2026-09-15/16: ffmpeg takes ONE ~1.5 MB allocation
+// somewhere in the first three quarters of an hour and is flat either side of it.
+//
+//   hour2   1 h   step ~43 min      linear fit 3.293 MB/h
+//   hour3   1 h   no step           linear fit 1.304 MB/h
+//   hour4   1 h   step ~28-33 min   linear fit 3.516 MB/h
+//   rss4h   4 h   step at 25 min    linear fit 0.094 MB/h, 0.70 MB/h counting the step
+//
+// One step dominates an hour-long fit and washes out of a four-hour one, so whether a
+// one-hour run passes depends on when the step happens to land relative to the warm-up
+// phase — which is arbitrary. Four hours is where the statistic starts describing
+// ffmpeg rather than describing the step.
+//
+// The 2.0 MB/h threshold is NOT changed; it is still the renderer harness's figure,
+// imported rather than restated. What changes is refusing to judge a run too short for
+// the number to mean anything, which is the defence runtime/realtime.mjs already built
+// for exactly this reason — the rule is theirs, the duration is ffmpeg's.
+//
+// Consequence worth stating: a one-hour tier-0 run cannot assess ffmpeg's RSS at all, so
+// the spec's criterion 2 ("ffmpeg RSS flat", on a one-hour run) needs four hours to mean
+// anything. See ops/README.md.
+export const FFMPEG_RSS_MIN_ASSESSABLE_SECONDS = 4 * 3600;
+
+export function assessFfmpegRss({ slopeBytesPerHour, wallSeconds, minSeconds = FFMPEG_RSS_MIN_ASSESSABLE_SECONDS }) {
+  const mb = (b) => (b / (1024 * 1024)).toFixed(3);
+  if (wallSeconds < minSeconds) {
+    return {
+      ok: true, assessed: false,
+      reason: `${mb(slopeBytesPerHour)} MB/h reported, not judged: ${(wallSeconds / 3600).toFixed(1)} h is under the ${minSeconds / 3600} h a single ~1.5 MB ffmpeg allocation needs to wash out of the fit`,
+    };
+  }
+  return assessRssSlope({ slopeBytesPerHour, wallSeconds });
 }

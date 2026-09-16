@@ -285,6 +285,42 @@ docker run --rm -v "$PWD/ops:/units:ro" node:22-slim bash -c \
 A text assertion over a config file is a proxy for the parser that actually reads it. Where
 the real parser can be run, run it.
 
+## ffmpeg's RSS, characterised — 2026-09-16
+
+Four clean runs, and the gate that kept firing was measuring the wrong thing.
+
+| run | length | step | linear fit |
+|---|---|---|---|
+| hour2 | 1 h | ~43 min | 3.293 MB/h **FAIL** |
+| hour3 | 1 h | none | 1.304 MB/h pass |
+| hour4 | 1 h | ~28-33 min | 3.516 MB/h **FAIL** |
+| rss4h | 4 h | 25 min | **0.094 MB/h** pass (0.70 MB/h counting the step) |
+
+**ffmpeg takes ONE ~1.5 MB allocation in the first three quarters of an hour and is flat
+either side of it.** Over four hours: 351.8 → 354.6 MB, one step, nothing else. That is
+~1.5 MB per process lifetime, not a leak — the 24/7 concern this gate exists for does not
+materialise.
+
+One step dominates a one-hour linear fit and washes out of a four-hour one, so whether a
+one-hour run passed depended on when the step happened to land relative to the warm-up
+phase. That is arbitrary, and it is the metric's fault rather than the pipeline's.
+
+`ops/measure.mjs`'s `assessFfmpegRss()` therefore refuses to judge a run shorter than four
+hours, and reports the figure instead. **The 2.0 MB/h threshold is unchanged** and still
+imported from the renderer's harness rather than restated; what changed is declining to
+fit a trend to a run too short for the number to mean anything, which is the defence
+`runtime/realtime.mjs` already built for the renderer at one hour. The rule is theirs; the
+duration is ffmpeg's.
+
+**Consequence for the spec.** Criterion 2 asks for "ffmpeg RSS flat" on a **one-hour** run.
+A one-hour run cannot assess that. Either the criterion wants four hours, or its RSS term
+should be read as "reported, and judged separately" — a decision for whoever provisions
+the production host, where criterion 1's long run has to happen anyway.
+
+```sh
+npm run tier0 -- --minutes 240 --log-every 300     # the run that characterised this
+```
+
 ## Levels: measured, not corrected
 
 Reproduce rather than trust:
