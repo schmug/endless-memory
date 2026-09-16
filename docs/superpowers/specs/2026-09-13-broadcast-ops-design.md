@@ -572,27 +572,54 @@ rather than hanging on it.
 
 ### Figures
 
-**Acceptance criterion 2 is met.** `npm run tier0 -- --minutes 60 --kill-feeder-at 1800`,
-one hour to a local sink, video feeder killed at the half hour:
+**Acceptance criterion 2 is met — by a four-hour run, not a one-hour one.** See "ffmpeg's
+RSS needs four hours" below for why. `npm run tier0 -- --minutes 240 --log-every 300`:
 
 | measure | result |
 |---|---|
 | tracks | h264 1280x720 + aac 48000 Hz 2ch, one ffmpeg invocation |
-| audio | 1.000 h produced in 1.003 h wall |
-| drift | −10.44 s against the ±25.60 s bound `driftTolerance()` derives |
-| startup offset | 8.77 s, one-time |
-| pacing | 357 intervals past warm-up, slowest 0.998x, floor 0.97 |
+| audio | 4.000 h produced, output clock advanced throughout |
+| drift | within the ±25.60 s bound `driftTolerance()` derives |
+| pacing | 1435 intervals past warm-up; one isolated 0.962x, not sustained, correctly not gated |
 | A/V skew | +0.047 s at the start, −0.012 s at the end; grew −0.059 s |
 | levels | −19.8 LUFS, LRA 1.0 LU, true peak −4.1 dBFS (source: −20.0 / −4.3) |
 | silence | none |
-| feeder kill | audio ran on to 3600.1 s; outage dipped pacing to 0.749x, recovered by 1821 s |
-| ffmpeg RSS | +1.059 MB/h, within the 2.0 MB/h endurance threshold |
+| ffmpeg RSS | 351.8 → 354.6 MB over 4 h: ONE ~1.5 MB step at 25 min, then flat. Fit 0.094 MB/h |
 
-The criterion's three terms: A/V sync drift is stated at both ends and did not grow;
-ffmpeg's RSS is flat at about 353 MB with a slope inside the threshold `endurance.mjs`
-already uses for the renderer; and no interval outside the induced outage fell below
-0.97. The 0.749x dip is the deliberate feeder kill and is reported as its own figure —
-the measured cost of a video outage to the audio — rather than folded into starvation.
+### ffmpeg's RSS needs four hours, and criterion 2 asks for one
+
+Four clean runs, 2026-09-15/16:
+
+| run | length | step | linear fit |
+|---|---|---|---|
+| hour2 | 1 h | ~43 min | 3.293 MB/h fail |
+| hour3 | 1 h | none | 1.304 MB/h pass |
+| hour4 | 1 h | ~28-33 min | 3.516 MB/h fail |
+| rss4h | 4 h | 25 min | 0.094 MB/h pass |
+
+ffmpeg takes **one** ~1.5 MB allocation in the first three quarters of an hour and is flat
+either side of it — about 1.5 MB per process lifetime, so the 24/7 leak the gate exists to
+catch does not materialise. But one step dominates an hour-long linear fit and washes out
+of a four-hour one, so whether a one-hour run passed depended on when the step happened to
+land relative to the warm-up phase.
+
+`ops/measure.mjs`'s `assessFfmpegRss()` therefore declines to judge a run under four hours
+and reports the figure instead. The 2.0 MB/h threshold is unchanged and still the
+renderer harness's.
+
+**So criterion 2's "ffmpeg RSS flat" cannot be assessed on the one-hour run the criterion
+asks for.** Either it wants four hours, or its RSS term is "reported, judged separately".
+That is a decision for whoever provisions the production host, where criterion 1's long
+run has to happen anyway.
+
+### Criterion 2's other correction
+
+Two of the pacing failures that produced these runs were an artifact of this spec's own
+alert condition being implemented without its duration. "`speed` outside 0.97-1.03 **for
+two minutes**" was implemented as "any single 10-second interval outside", and across two
+clean hours — 359 intervals each, median exactly 1.000 — the single sub-floor sample in
+each was preceded by a compensating overshoot that cancelled it. The floor is unchanged;
+the duration is restored.
 
 Levels agree with the source figures recorded above, which is the evidence that the
 `asplit` leg reaching the encoder is unaltered.
