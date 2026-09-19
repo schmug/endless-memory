@@ -339,6 +339,42 @@ listening pass, governed by the same rule as `npm run fixtures`.
 If true peak is ever above −1 dBTP, or `render.mjs`'s clipped counter is ever nonzero,
 that is a **renderer bug to investigate**, not a level to correct downstream.
 
+## YouTube's 12-hour ceiling — measured, 2026-09-19
+
+A 12-hour test upload was removed by YouTube: *"This video was removed because it was
+too long."* The documented cap is **256 GB or 12 hours, whichever is less**
+(`support.google.com/youtube/answer/71673`). Size was never close: the file was 1.20 GB
+at 222 kbps. Duration was the whole story, and it had **zero margin**.
+
+`ffprobe` on the rejected file:
+
+| track | measured | seconds |
+|---|---|---|
+| container | `format=duration` | 43200.000000 |
+| video | 1,296,000 frames @ 30 fps | 43200.000000 |
+| audio | 2,025,001 AAC frames x 1024 / 48000 | 43200.021333 |
+
+The coded audio is **one AAC frame longer than 12 hours**; the container's edit list
+trims it back to exactly 43200.000. Which of the two numbers YouTube's ingest read was
+not observed — 43200.000 taken as at-the-limit, or 43200.021 taken as over it. Either
+way a run aimed at exactly the cap has nothing to spare, so the mechanism does not need
+to be settled to fix it.
+
+**The render grid does not save you.** `runtime/render.mjs` renders
+`ceil(seconds / BAR_MS)` cycles, and 43,200,000 ms / (240000/76) is **13680 exactly**, so
+`--seconds 43200` is exactly 12 hours — the boundary, not a value near it.
+
+**Rule: a file destined for upload gets `--seconds 42900`** (11h55m, exactly 13585
+cycles). This is an upload constraint only; nothing in `ops/` reads it, because tier 0
+writes to a local sink and tiers 1-3 push RTMPS.
+
+**It reaches the live path as a different limit.** YouTube auto-archives a stream only
+if it ran **under 12 hours**; a longer one may not be captured at all
+(`support.google.com/youtube/answer/6247592`). A continuous station therefore produces
+**no VOD** — the broadcast is unaffected, the replay does not exist. If tier 2's
+end-to-end run is ever wanted as a reviewable artifact, it has to stay under 12 hours or
+be recorded locally.
+
 ## Install (not yet exercised — no host exists)
 
 ```sh
