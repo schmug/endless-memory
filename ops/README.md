@@ -4,13 +4,17 @@ Everything between `runtime/render.mjs --out -` and a listener. Implemented from
 `docs/superpowers/specs/2026-09-13-broadcast-ops-design.md`; read that first, it is
 authoritative and this file does not repeat it.
 
-**What is built: tier 0, plus a live runner that has never been run against a real
-destination.** Tier 0 is the complete pipeline against a **local sink** — no RTMPS, no
-Cloudflare, no YouTube, no secrets, no metered traffic. `ops/live.mjs` is the same
-pipeline pointed at an RTMPS destination; its plumbing is smoke-tested against a dead
-local port, and **no run against Cloudflare or YouTube has happened yet**. The spec's
-tiers 1–3 (a test live input, an unlisted YouTube broadcast, the public stream) also
-assume a production host, which does not exist — a live run today comes off a laptop.
+**What is built: tier 0, plus a live runner proven direct to YouTube.** Tier 0 is the
+complete pipeline against a **local sink** — no RTMPS, no Cloudflare, no secrets, no
+metered traffic. `ops/live.mjs` is the same pipeline pointed at an RTMPS destination, and
+on 2026-09-20 it streamed to an unlisted YouTube broadcast at 1.000x with criterion 8
+measured on the received stream (see below).
+
+**That is not tier 2.** It pushed **direct to YouTube, bypassing Cloudflare**, so it
+proves ingest, pacing and levels and proves nothing about spec criterion 5 — whether a
+restart keeps the broadcast alive — because Cloudflare holding the YouTube connection is
+the mechanism that claim rests on. Tiers 1–3 remain unrun and five acceptance criteria
+remain unmet (#55). A live run today also comes off a laptop; no production host exists.
 
 ```
 ops/stream.sh                         the pipeline: render.mjs | ffmpeg, the feeder, the fifo holder fd
@@ -459,6 +463,100 @@ outside band for 2 minutes" alert. This run's clock was frozen for 30 of its 36 
 and the report still said *"output clock advanced throughout"*. Against a file that
 threshold is right; against a live ingest that hangs up first, it can never fire. The
 live path needs its own, shorter threshold — unresolved, and tracked separately.
+
+## The live path works — measured 2026-09-20, same evening
+
+The TLS diagnosis above was inferred when it was written. It is now confirmed, and
+criterion 8 has a number for the first time.
+
+**Same command, same key, same destination, only the encoder binary changed** — the
+retry passed `--ffmpeg /opt/homebrew/bin/ffmpeg` (8.1.2, `--enable-openssl`) and ran
+25 minutes to an unlisted broadcast. **Verdict PASS**, and it ended by reaching its own
+`--minutes 25` limit rather than by failing:
+
+```
+produced 25.0 min of audio in 25.2 min wall
+drift: -13.42s vs realtime, bound +/-25.60s
+startup offset: 8.77s
+pacing: 149 interval(s) past warm-up, slowest 0.977x, floor 0.97
+levels (source): -19.8 LUFS, LRA 1.0 LU, true peak -4.4 dBFS
+stall: output clock advanced throughout
+encoder: /opt/homebrew/bin/ffmpeg, TLS via --enable-openssl
+key in output: absent
+render: 475 cycles total, peak 0.6944, 0 clipped sample(s)
+ffmpeg RSS 346.0 -> 346.7 MB over 8 phases, 1.381 MB/h reported, not judged under 4 h
+```
+
+**The pacing floor has less headroom over a real uplink.** Slowest interval was 0.977x
+against the 0.97 floor, where the local-file and local-socket controls the same evening
+managed 0.997x and 0.987x. It passed, and 25 minutes is not long enough to say whether
+that margin is stable — it is the margin a network hiccup eats into, so it is the thing
+to watch on the first long run rather than the RSS figure.
+
+The cumulative figure climbing is the startup offset washing out, exactly as finding 2
+above describes. It is not a pacing problem, and this run is the clearest demonstration
+of that: interval speed was 1.000x from the first post-warm-up sample while the
+cumulative number still read 0.56x.
+
+**So the RTMPS failure was the TLS backend, confirmed by swapping only the binary.**
+
+### Criterion 8, measured on the received stream
+
+Pulled the 720p rendition back down off YouTube while the run was live and measured what
+a listener actually receives:
+
+| | measured | spec band |
+|---|---|---|
+| integrated | **−19.4 LUFS** | −22 … −18 |
+| true peak | **−4.4 dBFS** | at or below −1 dBTP |
+| LRA | 1.0 LU | — |
+
+The whole chain holds: renderer PCM at −20.0 LUFS, through the encoder, through YouTube's
+transcode, back down at −19.4. 0.6 LU across the entire path and no boost applied. This
+is the one verdict `ops/live.mjs` reports as unreachable, and it is unreachable **from the
+sending side** rather than in principle — pulling the stream back down recovers it, and
+recovers track layout and A/V skew with it.
+
+Reproduce (needs a live stream and an ffmpeg with TLS):
+
+```sh
+U=$(yt-dlp --no-warnings -f 95 -g "<watch url>" | head -1)
+/opt/homebrew/bin/ffmpeg -user_agent "Mozilla/5.0" -i "$U" -t 30 -vn -c:a copy -y /tmp/recv.aac
+/opt/homebrew/bin/ffmpeg -i /tmp/recv.aac -af ebur128=peak=true -f null -
+```
+
+**What comes back is 44.1 kHz AAC-LC at 130 kbps**, resampled from the 48 kHz / 192 kbps
+source — matching the 2026-09-19 upload's renditions. Apple players get that path, so what
+most listeners hear is not what `runtime/fixtures/golden-quiet.json` pins.
+
+### YouTube's low-bitrate warning is expected and costs nothing
+
+The Live Control Room reports *"current bitrate (220.34 Kbps) is lower than the
+recommended bitrate. We recommend 2500 Kbps."* That is arithmetic, not a fault: x264 runs
+with `nal_hrd=none filler=0`, so `-b:v 800k` is a ceiling and nothing pads it, and a
+static 1280x720 PNG encodes to about 33 kbps (`kb/s:32.88` in the tier-0 log). 33 + 192
+≈ 225 kbps.
+
+**Nothing was lost to it.** With the stream at 220 kbps, YouTube served every rendition
+through 720p:
+
+```
+91  256x144    269k      93  640x360   962k      95  1280x720  2448k
+92  426x240    507k      94  854x480  1283k
+```
+
+Raising the video bitrate to 2500 kbps would pad roughly 2.3 Mbps of filler 24/7 to
+transmit a still image — about 810 GB/month of uplink against 71 GB at the measured rate.
+Leave it. When piece D (#38) puts moving content in the frame the rate will rise toward
+the 800k ceiling on its own, and that is the point to revisit it.
+
+### A trap on this machine
+
+`/Users/cory/.local/bin/ffmpeg` precedes `/opt/homebrew/bin` on PATH, so **anything that
+shells out to `ffmpeg` gets the TLS-less build** — `yt-dlp` hit it too while capturing the
+stream above and failed with the same opaque exit code. `--ffmpeg-location
+/opt/homebrew/bin` works around it per-invocation; reordering PATH or removing the
+TLS-less build retires the whole class.
 
 ## Levels: measured, not corrected
 
