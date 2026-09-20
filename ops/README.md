@@ -470,15 +470,28 @@ The TLS diagnosis above was inferred when it was written. It is now confirmed, a
 criterion 8 has a number for the first time.
 
 **Same command, same key, same destination, only the encoder binary changed** — the
-retry passed `--ffmpeg /opt/homebrew/bin/ffmpeg` (8.1.2, `--enable-openssl`) and streamed
-for the full run. Seventeen minutes in:
+retry passed `--ffmpeg /opt/homebrew/bin/ffmpeg` (8.1.2, `--enable-openssl`) and ran
+25 minutes to an unlisted broadcast. **Verdict PASS**, and it ended by reaching its own
+`--minutes 25` limit rather than by failing:
 
-| | |
-|---|---|
-| interval pacing | **1.000x** throughout — 30 s of output per 30 s of wall, every sample |
-| cumulative speed | 0.56x at 0.5 min climbing to 0.99x by 10 min |
-| ffmpeg RSS | 345.9 → 346.6 MB over 17 min |
-| stall | none |
+```
+produced 25.0 min of audio in 25.2 min wall
+drift: -13.42s vs realtime, bound +/-25.60s
+startup offset: 8.77s
+pacing: 149 interval(s) past warm-up, slowest 0.977x, floor 0.97
+levels (source): -19.8 LUFS, LRA 1.0 LU, true peak -4.4 dBFS
+stall: output clock advanced throughout
+encoder: /opt/homebrew/bin/ffmpeg, TLS via --enable-openssl
+key in output: absent
+render: 475 cycles total, peak 0.6944, 0 clipped sample(s)
+ffmpeg RSS 346.0 -> 346.7 MB over 8 phases, 1.381 MB/h reported, not judged under 4 h
+```
+
+**The pacing floor has less headroom over a real uplink.** Slowest interval was 0.977x
+against the 0.97 floor, where the local-file and local-socket controls the same evening
+managed 0.997x and 0.987x. It passed, and 25 minutes is not long enough to say whether
+that margin is stable — it is the margin a network hiccup eats into, so it is the thing
+to watch on the first long run rather than the RSS figure.
 
 The cumulative figure climbing is the startup offset washing out, exactly as finding 2
 above describes. It is not a pacing problem, and this run is the clearest demonstration
