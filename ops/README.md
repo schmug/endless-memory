@@ -452,9 +452,23 @@ other gives **−51.9 dB RMS**, roughly 32 dB below programme — but that figur
 corrected for AAC priming delay**, which would inflate it, so treat it as an upper bound
 rather than a measurement of audible difference.
 
-Almost certainly inaudible, and still a sound change by this repo's rule: **the encoder
-path at 8.1.2 has not been listened to.** Fine for a test to an unlisted stream; wants a
-listening pass before anything public, governed the same way as `npm run fixtures`.
+Almost certainly inaudible, and still a sound change by this repo's rule, so it got a
+listening pass rather than an argument.
+
+**Listened to and approved on 2026-09-20.** Cory listened to the 25-minute live run
+(unlisted broadcast `jFvbZwi_-uQ`), encoded by ffmpeg 8.1.2 and played back **through
+YouTube** rather than locally. Verdict: approved.
+
+That is a stronger listen than 2026-09-19's, which was local playback of an encode. This
+one covers the whole delivered chain — renderer, the 8.1.2 AAC encoder, RTMPS, YouTube's
+transcode, and the **44.1 kHz AAC-LC at 130 kbps** rendition a real listener is served,
+resampled from the 48 kHz / 192 kbps source. The resample is now inside what has been
+approved, where before it was only inferred from an upload's player config.
+
+**The approved encoder is therefore ffmpeg 8.1.2 at the flags in `ops/stream.sh` as of
+2026-09-20**, superseding 8.0 for the live path. A further change to the codec, bitrate
+or filter graph is a new sound change needing its own listen, governed the same way as
+`npm run fixtures`.
 
 ### What the harness got wrong
 
