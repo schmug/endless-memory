@@ -4,10 +4,13 @@ Everything between `runtime/render.mjs --out -` and a listener. Implemented from
 `docs/superpowers/specs/2026-09-13-broadcast-ops-design.md`; read that first, it is
 authoritative and this file does not repeat it.
 
-**What is built: tier 0 only** — the complete pipeline against a **local sink**. No
-RTMPS, no Cloudflare, no YouTube, no secrets, no metered traffic. Tiers 1–3 of the
-spec's test path (a test live input, an unlisted YouTube broadcast, the public stream)
-need a host that does not exist yet.
+**What is built: tier 0, plus a live runner that has never been run against a real
+destination.** Tier 0 is the complete pipeline against a **local sink** — no RTMPS, no
+Cloudflare, no YouTube, no secrets, no metered traffic. `ops/live.mjs` is the same
+pipeline pointed at an RTMPS destination; its plumbing is smoke-tested against a dead
+local port, and **no run against Cloudflare or YouTube has happened yet**. The spec's
+tiers 1–3 (a test live input, an unlisted YouTube broadcast, the public stream) also
+assume a production host, which does not exist — a live run today comes off a laptop.
 
 ```
 ops/stream.sh                         the pipeline: render.mjs | ffmpeg, the feeder, the fifo holder fd
@@ -17,6 +20,7 @@ ops/placeholder.mjs                   generates ops/placeholder.png
 ops/placeholder.png                   the launch picture, 1280x720
 ops/measure.mjs                       level, pacing, A/V-sync and stall parsers and verdicts
 ops/tier0.mjs                         the local-sink proof run (`npm run tier0`)
+ops/live.mjs                          the same pipeline against RTMPS (`npm run live`)
 ops/endless-memory-stream.service     systemd unit: render -> ffmpeg -> and the feeder
 ```
 
@@ -38,6 +42,63 @@ survived; the output clock never frozen for 120s; ffmpeg's RSS flat. A clean exi
 large file are not a pass, and neither is a run that never exited at all.
 
 Every flag change gets validated here first. It costs nothing.
+
+## Run a live one
+
+`ops/live.mjs` is the same `stream.sh` against a **network** destination. Tier 0 sets
+`SINK` and never `CF_STREAM_KEY`; this sets `CF_STREAM_KEY` and never `SINK`. `stream.sh`
+refuses both at once, so the two runners cannot be mistaken for one another at runtime.
+
+```sh
+npm run live -- --key-file ~/.config/endless-memory/youtube.key --minutes 25
+```
+
+`--destination youtube` (the default) or `cloudflare`, or `--rtmps-base <url>` for
+anything else. `--kill-feeder-at N` and `--anchor <ISO>` behave as in tier 0; with no
+anchor the renderer reads the wall clock, which is what production does.
+
+**The key is never an argument.** It is read from the file named by `--key-file`, put in
+the child's environment, and scrubbed out of everything the harness writes down —
+`ps` shows an argv to every local user, and ffmpeg echoes its output URL on a connect
+error, which is exactly when a log gets pasted somewhere. The file must live **outside
+this repository**; `readKey` refuses one inside the worktree rather than trusting the
+`.gitignore` pattern. It also refuses an env assignment (`CF_STREAM_KEY=abc`, which trims
+clean and would otherwise be used verbatim as the key) and a pasted URL. The run reports
+`key in output: absent` as a measurement, which is spec criterion 10 made mechanical.
+
+**Three verdicts tier 0 gives you are unreachable here**, and the report names them
+rather than omitting them: track layout, `silencedetect` and A/V skew all need an output
+file to probe, and there is no container on this side of the socket. A fourth,
+criterion 8's loudness **on the received stream**, has to be measured at the destination;
+what `levels` reports is the source figure off the in-graph `ebur128`, the same one tier 0
+reports. What this run *does* cover that tier 0 cannot: RTMPS auth, a real uplink, and
+whether the encoder holds 1x with a socket rather than a file absorbing its output.
+
+`assertRtmpsSupport` runs before the fifo is made: an ffmpeg built without TLS has no
+`rtmps` protocol, and finding that out from a connect error 40 minutes in is the
+avoidable version of that discovery.
+
+### Direct to YouTube versus through Cloudflare
+
+`--destination youtube` pushes straight from this host to
+`rtmps://a.rtmps.youtube.com:443/live2`, skipping Cloudflare entirely. That is **not the
+adopted design** and it cannot test the claim the adopted design rests on.
+
+The spec's topology exists so that **Cloudflare holds the YouTube connection** — the
+renderer restarts underneath it and the broadcast does not notice, which is what makes
+"restart to apply a journal change" cheap (spec criterion 5). Pushing direct, every
+restart ends the YouTube broadcast and starts a new one. A direct run therefore proves
+ingest, auth, pacing and levels, and proves **nothing** about restart transparency.
+
+Current Cloudflare Stream pricing, re-read 2026-09-20 rather than trusted from the spec's
+2026-09-13 figures (`developers.cloudflare.com/stream/pricing`): **$5 per 1,000 minutes
+stored**, **$1 per 1,000 minutes delivered**, and simulcasting via RTMP live outputs
+counts as delivery. With `recording.mode: off` there is no storage charge, so a 24/7
+station is 43,200 delivered minutes ≈ **$43.20/month**, which matches the spec's $43
+baseline. Testing is not the cost: a 30-minute tier-1 run with zero outputs is $0, and a
+30-minute tier-2 run with one output is about $0.03. The $43.20 is what restart
+transparency costs per month, and deferring it until the pipeline has survived a real
+network at all is a reasonable order to do things in.
 
 ## Three mechanics that are load-bearing
 
@@ -321,6 +382,84 @@ the production host, where criterion 1's long run has to happen anyway.
 npm run tier0 -- --minutes 240 --log-every 300     # the run that characterised this
 ```
 
+## The first live run to YouTube failed on TLS — measured, 2026-09-20
+
+A 25-minute run to an unlisted YouTube broadcast died after 36 seconds having delivered
+nothing. YouTube's Stream health said **"No data"** the whole time. The cause was not in
+this repo, and the sequence is worth keeping because almost every signal pointed the
+wrong way.
+
+**What the run looked like.** ffmpeg connected, printed its full
+`Output #0, flv, to 'rtmps://a.rtmps.youtube.com:443/live2/...'` header — so TLS
+handshake, RTMP connect, createStream and **publish all succeeded** — then encoded four
+frames, froze at `time=00:00:00.10`, and stayed frozen for thirty seconds before dying
+with `[tls] IO Error: -9806`. Total bytes out: 31 KiB, about one socket buffer. The
+renderer's `EPIPE` at the end is the designed consequence of ffmpeg dying, not a cause.
+
+The `Resumed reading ... after a lag of 20.360s` lines on both inputs are **backpressure
+propagating backwards** from a blocked muxer, not a slow renderer. Reading them as
+renderer starvation sends you upstream, which is the wrong direction.
+
+**Three destinations, same flags, same machine, minutes apart.** This is what located it:
+
+| destination | result |
+|---|---|
+| local file (`npm run tier0`) | PASS — 2.0 min produced, slowest interval 0.997x |
+| local RTMP socket, flv muxer over a real socket | PASS — 2.0 min produced, slowest 0.987x |
+| RTMPS to YouTube | FAIL at 36s, 31 KiB, output clock frozen |
+
+The middle row is the one that matters: it exonerates the flv muxer, socket backpressure,
+`-re` on both inputs, `-shortest`, the fifo holder fd and the feeder. Nothing in the flag
+set needed changing, and changing flags would have been the expensive mistake here.
+
+**The cause: an ffmpeg with no TLS library.** `/Users/cory/.local/bin/ffmpeg` 8.0 lists
+`rtmps`, `rtmpts` and `tls` in `-protocols`, and its `-buildconf` contains **no TLS
+library at all** — no `--enable-openssl`, `--enable-gnutls` or `--enable-mbedtls`. It
+falls back to Apple's Secure Transport, and `-9806` is `errSSLClosedAbort`, a Secure
+Transport code rather than an OpenSSL one. That backend completes the handshake and then
+does not carry the session. Google's RTMPS guide requires SNI in the handshake
+(`developers.google.com/youtube/v3/live/guides/rtmps-ingestion`).
+
+**`rtmps` in `-protocols` is true and meaningless**, and it was the false reassurance that
+let the run start: the old `assertRtmpsSupport` checked exactly that. It now checks
+`-buildconf` for a real TLS library and names the override in the failure message.
+`ops/live.test.mjs` pins the regression with a stub whose `-protocols` lists `rtmps` and
+whose `-buildconf` has no TLS library.
+
+**The fix is `--ffmpeg /opt/homebrew/bin/ffmpeg`** (8.1.2, `--enable-openssl`).
+`stream.sh` already honoured `FFMPEG`; `live.mjs` now threads it and reports which binary
+and which TLS library produced the run. A production host needs a TLS-capable ffmpeg
+regardless, so this is a requirement rather than a workaround.
+
+### Changing the ffmpeg binary is a sound change, and it was measured
+
+The 2026-09-19 listen (#14's successor, `endless-memory-encoded-stream-listened`) went
+through ffmpeg **8.0**'s AAC encoder. Moving the live path to 8.1.2 changes the encoder.
+Measured on the same 60-second render, anchor `2026-09-11T12:00:00Z`, identical
+`-c:a aac -b:a 192k` settings:
+
+| | md5 of the ADTS stream | decoded integrated |
+|---|---|---|
+| ffmpeg 8.0 | `93ac7ab7741a2f3ee2d53a3446142215` | −19.9 LUFS |
+| ffmpeg 8.1.2 | `32c9c6d6e78c9a9b731c358c9d43ba2e` | −19.9 LUFS |
+
+Not bit-identical. Decoded loudness is unchanged. Nulling the two decodes against each
+other gives **−51.9 dB RMS**, roughly 32 dB below programme — but that figure is **not
+corrected for AAC priming delay**, which would inflate it, so treat it as an upper bound
+rather than a measurement of audible difference.
+
+Almost certainly inaudible, and still a sound change by this repo's rule: **the encoder
+path at 8.1.2 has not been listened to.** Fine for a test to an unlisted stream; wants a
+listening pass before anything public, governed the same way as `npm run fixtures`.
+
+### What the harness got wrong
+
+`detectStall` needs 120 s of frozen output clock, borrowed from the spec's "`speed`
+outside band for 2 minutes" alert. This run's clock was frozen for 30 of its 36 seconds
+and the report still said *"output clock advanced throughout"*. Against a file that
+threshold is right; against a live ingest that hangs up first, it can never fire. The
+live path needs its own, shorter threshold — unresolved, and tracked separately.
+
 ## Levels: measured, not corrected
 
 Reproduce rather than trust:
@@ -367,6 +506,20 @@ to be settled to fix it.
 **Rule: a file destined for upload gets `--seconds 42900`** (11h55m, exactly 13585
 cycles). This is an upload constraint only; nothing in `ops/` reads it, because tier 0
 writes to a local sink and tiers 1-3 push RTMPS.
+
+**The rule's upload half is confirmed; its render half is not.** A lossless trim of the
+rejected file — `ffmpeg -i endless-memory-test-12h-2026-09-19.mp4 -t 42900 -c copy
+endless-memory-test-11h55m-2026-09-19.mp4` — was uploaded and watched through:
+`https://www.youtube.com/watch?v=Azwsgt_H3Rs`. `ffprobe` reads that file at **42900.066667
+s** (1,287,002 video frames at 30 fps), 1.19 GB. Because `-c copy` re-encodes nothing, what
+was watched is bit-identical to the listener-approved encode, which is why the listen
+carries over.
+
+What it does **not** establish is the rule as written. `render.mjs --seconds 42900` has
+never been run. That 42,900,000 ms / (240000/76) is exactly 13585 cycles is arithmetic, not
+an observation, and a real render lands at 42900.000 where this trim landed at 42900.067 —
+`-c copy` cuts on a packet boundary, not at the requested time. The upload was made outside
+any recorded session, so the only account of it is this paragraph.
 
 **It reaches the live path as a different limit.** YouTube auto-archives a stream only
 if it ran **under 12 hours**; a longer one may not be captured at all

@@ -126,7 +126,12 @@ const ffprobeJson = (args) => {
 
 // Walk the process tree from a root pid. stream.sh spawns node and ffmpeg itself, so
 // their pids are not known here; `ps` is the only place they exist.
-function descendants(rootPid) {
+//
+// Exported for ops/live.mjs, which supervises the same stream.sh against a network
+// destination and must walk the same tree. One implementation, not two: a live run that
+// found ffmpeg differently from a tier-0 run would report different RSS for the same
+// process.
+export function descendants(rootPid) {
   let rows = '';
   try { rows = execFileSync('ps', ['-A', '-o', 'pid=,ppid=,rss=,comm='], { encoding: 'utf8' }); } catch { return []; }
   const procs = rows.split('\n').map((l) => {
@@ -144,7 +149,7 @@ function descendants(rootPid) {
   return out;
 }
 
-const killTree = (rootPid) => {
+export const killTree = (rootPid) => {
   for (const p of descendants(rootPid)) { try { process.kill(p.pid, 'SIGKILL'); } catch { /* already gone */ } }
   try { process.kill(rootPid, 'SIGKILL'); } catch { /* already gone */ }
 };
