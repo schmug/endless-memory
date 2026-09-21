@@ -572,6 +572,77 @@ stream above and failed with the same opaque exit code. `--ffmpeg-location
 /opt/homebrew/bin` works around it per-invocation; reordering PATH or removing the
 TLS-less build retires the whole class.
 
+## An 11.9-hour live run — measured 2026-09-21
+
+The longest run so far, and the first long enough for the RSS gate to return a judgement
+instead of declining to. It ended when the **host lost its network connection**, not when
+anything in the pipeline gave way.
+
+`verdict: FAIL`, and that is the correct verdict — the run really did end in starvation.
+But all three FAIL lines describe the same ~170 seconds at the very end:
+
+```
+produced 709.4 min of audio in 712.3 min wall
+drift: -172.38s vs realtime, bound +/-25.60s
+pacing: video starvation: below the 0.97 floor for 169s, from 42566s to 42735s (worst 0.000x)
+stream.sh exited 224
+```
+
+42566 s is 709.4 min. The starvation window, the drift and the shortfall in produced audio
+are one event, not three findings. The two progress samples either side of it show output
+advancing 42557 s -> 42566 s across 90 s of wall: that is the connection dying, and the
+renderer blocking behind a muxer that could no longer write.
+
+**Everything before it was clean:** cumulative speed 1.00x, holding.
+
+### The RSS question is answered
+
+```
+ffmpeg RSS verdict: -0.006 MB/h is within the 2.0 MB/h endurance threshold
+```
+
+`assessFfmpegRss` refuses to judge a run under four hours, because one ~1.5 MB allocation
+dominates a shorter fit (see "ffmpeg's RSS, characterised" above). At 11.87 h it judged,
+and the answer is essentially zero drift per hour.
+
+| phase | span (h) | median RSS | min | max |
+|---|---|---|---|---|
+| 1 | 0.00-1.48 | 346.5 MB | 68.1 MB | 346.8 MB (warm-up) |
+| 2-7 | 1.48-10.39 | **346.8 MB** | 346.8 MB | 346.8 MB |
+| 8 | 10.39-11.87 | 346.7 MB | 346.0 MB | **353.4 MB** |
+
+Phases 2 through 7 are flat to a tenth of a megabyte across ten hours. Phase 8's 353.4 MB
+maximum is the outage, not a leak: buffers filling behind an output that had stopped
+draining, the same signature the 2026-09-14 wedge produced (350.3 -> 352.2 MB). It appears
+in the max and not the median, which is why the median-based fit is the one to trust.
+
+**The 24/7 memory concern this gate exists for does not materialise.** That is now measured
+over half a day rather than extrapolated from an hour.
+
+### It also retires the pacing-margin worry
+
+The 25-minute run's slowest interval was 0.977x against a 0.97 floor, recorded above as
+thin margin worth watching on a long run. Across 11.9 hours the run held 1.00x. The margin
+was not the beginning of a trend.
+
+### The stall detector still did not fire — and did not need to
+
+`detectStall` requires 120 s of an output clock that does not move at all. Here it kept
+creeping (42557 -> 42566), so the test never tripped, while `assessStarvation` caught the
+same event as 169 s below the pacing floor.
+
+That is worth recording precisely, because it narrows #54: on the live path **pacing is the
+sharper instrument, not stall**. A frozen clock is the wedge's signature; a *crawling* clock
+is what a network outage produces, and only the pacing verdict sees it. Whatever threshold
+#54 settles on, the starvation check is what actually caught the one real live failure so
+far.
+
+### Incidental: it would have archived
+
+11.87 h is inside YouTube's 12-hour auto-archive limit (see "YouTube's 12-hour ceiling"
+above), with about eight minutes to spare. A continuous station will not produce a VOD; a
+run of this length does.
+
 ## Levels: measured, not corrected
 
 Reproduce rather than trust:
