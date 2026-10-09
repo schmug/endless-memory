@@ -14,7 +14,8 @@ measured on the received stream (see below).
 proves ingest, pacing and levels and proves nothing about spec criterion 5 — whether a
 restart keeps the broadcast alive — because Cloudflare holding the YouTube connection is
 the mechanism that claim rests on. Tiers 1–3 remain unrun and five acceptance criteria
-remain unmet (#55). A live run today also comes off a laptop; no production host exists.
+remain unmet (#55). Since 2026-10-09 the station runs 24/7 from a WSL2 host, direct to
+YouTube — see "The production host" below.
 
 ```
 ops/stream.sh                         the pipeline: render.mjs | ffmpeg, the feeder, the fifo holder fd
@@ -728,7 +729,56 @@ if it ran **under 12 hours**; a longer one may not be captured at all
 end-to-end run is ever wanted as a reviewable artifact, it has to stay under 12 hours or
 be recorded locally.
 
-## Install (not yet exercised — no host exists)
+## The production host — WSL2, direct to YouTube, 2026-10-09
+
+The station runs 24/7 on a Windows machine's WSL2 Ubuntu 22.04 distro (systemd enabled,
+NTP synced, 16 cores, 15 GB), pushing **direct to YouTube** —
+`youtube.com/live/-v2Y4mpkNDk`. Direct, not through Cloudflare, by choice: $0 against
+~$43/month, accepting that every restart (a journal change, a crash, the stall watchdog)
+interrupts the YouTube broadcast. Criterion 5 stays unmet (#55).
+
+### The encoder is ffmpeg 8.1.3, listened to and approved
+
+BtbN's static `ffmpeg-n8.1-latest-linux64-gpl-8.1` (reports `n8.1.3`, `--enable-openssl`),
+sha256 checked against the release's `checksums.sha256`. A patch release past the
+approved 8.1.2, so it got a listen: Cory listened to a 10-minute live run (PASS: slowest
+interval 0.990x, −19.8 LUFS / −4.3 dBFS source, 0 clipped) and then to the production
+broadcast above, both through YouTube. Verdict: "sounded great" — approved. **The
+approved encoder is now ffmpeg 8.1.3 at the flags in `ops/stream.sh` as of 2026-10-09.**
+
+### What differs from "Install" below on this host
+
+- **node and ffmpeg live in `/usr/local/bin`.** Ubuntu 22.04's `/usr/bin/node` is v12,
+  and nvm's node is under `/home`, which `ProtectHome=yes` hides from the unit. Node is
+  v24.18.0 here; CI tests on 22.
+- **`stream.env` carries three lines:** `CF_STREAM_KEY` (the YouTube key, despite the
+  name), `RTMPS_BASE=rtmps://a.rtmps.youtube.com:443/live2`, `FFMPEG=/usr/local/bin/ffmpeg`.
+- **`/opt/endless-memory` is an rsync of the checkout without `.git` or `node_modules`.**
+  A repo change — journal included — reaches the station only by re-syncing and
+  restarting the unit.
+- **WSL has to be kept alive from the Windows side.** `%USERPROFILE%\.wslconfig` sets
+  `vmIdleTimeout=-1`, and `endless-memory-keepalive.cmd` in the user's Startup folder
+  holds `wsl.exe -d Ubuntu --exec sleep infinity` open. Neither needed admin. **Gap:**
+  there is no at-boot task (that does need admin), so after a Windows reboot the station
+  stays down until the user logs in. Surviving with every terminal closed is unverified.
+
+### Two things found while bringing it up
+
+**`systemctl status` prints the stream key.** Its CGroup listing shows ffmpeg's full
+argv, RTMPS URL included — the same exposure "Rotate the stream key" accepts for `ps`,
+but `status` is the command anyone reaches for first, and its output gets pasted. It
+leaked the first key into a session transcript on 2026-10-09 and the key was rotated.
+Check health with `systemctl is-active` / `systemctl show -p NRestarts`, and pipe
+`journalctl` through `sed -E 's#live2/[A-Za-z0-9-]+#live2/REDACTED#g'`.
+
+**ffmpeg's per-minute `-stats` lines never reach journald while the stream runs.**
+Observed: nothing for 7.5 minutes, then the final line arrived at shutdown. Most likely
+cause, unconfirmed: ffmpeg ends periodic stats with `\r` and only the last with `\n`, and
+journald splits on `\n`. So journald carries no progress signal; the host-local liveness
+signal is `NRestarts` not climbing (the stall watchdog restarts a frozen clock within
+120 s), and `/run/endless-memory/progress`, readable only by the `endless` user.
+
+## Install (exercised 2026-10-09 on the WSL2 host — see "The production host")
 
 ```sh
 sudo useradd --system --home /opt/endless-memory --shell /usr/sbin/nologin endless

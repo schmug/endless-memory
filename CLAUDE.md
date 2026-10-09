@@ -132,6 +132,8 @@ in `docs/superpowers/specs/2026-09-11-audio-runtime-design.md`.
 
 ## Not built yet
 
-Live weather feed, visuals, broadcast, listener interaction.
+Live weather feed, visuals, listener interaction, and the Cloudflare leg of the
+broadcast. The broadcast itself runs 24/7 direct to YouTube from a WSL2 host since
+2026-10-09 (`ops/README.md`, "The production host").
 Each needs its own spec. The location for the weather feed is still undecided
 between Boston, Winthrop and Marblehead; `research/` holds the evidence.
