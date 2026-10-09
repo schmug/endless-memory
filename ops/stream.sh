@@ -40,6 +40,21 @@ LOGLEVEL="${LOGLEVEL:-warning}"
 STATS_PERIOD="${STATS_PERIOD:-60}"
 VIDEO_BITRATE="${VIDEO_BITRATE:-800k}"
 RTMPS_BASE="${RTMPS_BASE:-rtmps://live.cloudflare.com:443/live}"
+# The stall watchdog. ffmpeg writes its output clock (out_time_us) here once per
+# STATS_PERIOD; if it does not advance for STALL_SECONDS this script ends the pipeline,
+# because a wedged ffmpeg keeps every process alive and nothing else would. Beside the
+# fifo, so production gets the unit's RuntimeDirectory and the harnesses their temp dir.
+# The file grows ~250 bytes per period (~360 KB/day at 60) until the next restart
+# truncates it.
+PROGRESS_FILE="${PROGRESS_FILE:-$(dirname "$VIDEO_FIFO")/progress}"
+STALL_SECONDS="${STALL_SECONDS:-120}"
+
+# Two periods, not one: a healthy clock only moves when a record lands, so anything
+# shorter restarts a working station between two ordinary records.
+if [ "$STALL_SECONDS" -lt $((2 * STATS_PERIOD)) ]; then
+  echo "stream.sh: STALL_SECONDS ($STALL_SECONDS) must be at least twice STATS_PERIOD ($STATS_PERIOD)" >&2
+  exit 64
+fi
 
 if [ -n "${SINK:-}" ] && [ -n "${CF_STREAM_KEY:-}" ]; then
   echo "stream.sh: set SINK (tier 0) or CF_STREAM_KEY (production), not both" >&2
@@ -79,6 +94,7 @@ if [ -n "${SECONDS_LIMIT:-}" ]; then RENDER_ARGS=("${RENDER_ARGS[@]}" --seconds 
 # held a green unit over permanent dead air. See ops/README.md.
 FFMPEG_ARGS=(
   -hide_banner -loglevel "$LOGLEVEL" -stats -stats_period "$STATS_PERIOD"
+  -progress "$PROGRESS_FILE"
   -re -f image2pipe -framerate "$VIDEO_FPS" -i "$VIDEO_FIFO"
   -re -f s16le -ar 48000 -ac 2 -i -
   -filter_complex "[0:v]fps=30,format=yuv420p[v];[1:a]asplit=2[aout][ameter];[ameter]ebur128=peak=true:framelog=verbose[m];[m]anullsink"
@@ -99,6 +115,8 @@ if [ -n "${DRY_RUN:-}" ]; then
 fi
 
 [ -p "$VIDEO_FIFO" ] || mkfifo -m 600 "$VIDEO_FIFO"
+# A stale clock from the previous run must not count as this run's progress.
+: > "$PROGRESS_FILE"
 
 # A fifo returns EOF to its reader when the last writer closes. Holding it open
 # read-write on a spare descriptor means the feeder and ffmpeg can be started in either
@@ -130,9 +148,34 @@ PIPELINE=$!
 
 # Whichever dies first takes the other with it. A feeder-only restart is the failure
 # this whole arrangement exists to prevent, so a dead feeder must fail the unit.
+#
+# The same loop watches the output clock. Any change counts as progress — including a
+# record caught mid-write — so a misread can only delay a stall verdict, never cause one.
+# No record at all for STALL_SECONDS (ffmpeg never got going) is a stall too.
+LAST_CLOCK=""
+LAST_CHANGE=$SECONDS
+STALLED=""
 while kill -0 "$VIDEOFEED" 2>/dev/null && kill -0 "$PIPELINE" 2>/dev/null; do
   sleep 1
+  CLOCK="$(tail -n 40 "$PROGRESS_FILE" 2>/dev/null | grep '^out_time_us=' | tail -n 1 || true)"
+  if [ "$CLOCK" != "$LAST_CLOCK" ]; then
+    LAST_CLOCK="$CLOCK"
+    LAST_CHANGE=$SECONDS
+  elif [ $((SECONDS - LAST_CHANGE)) -ge "$STALL_SECONDS" ]; then
+    STALLED=1
+    break
+  fi
 done
+
+if [ -n "$STALLED" ]; then
+  echo "stream.sh: DEAD AIR — ffmpeg's output clock (${LAST_CLOCK:-no record}) has not advanced in ${STALL_SECONDS}s with every process alive; ending the pipeline so systemd restarts it" >&2
+  kill -TERM "$VIDEOFEED" "$PIPELINE" 2>/dev/null || true
+  # A wedged ffmpeg may not act on SIGTERM: its main thread is parked with the rest.
+  for _ in 1 2 3 4 5; do kill -0 "$PIPELINE" 2>/dev/null || break; sleep 1; done
+  kill -KILL "$PIPELINE" 2>/dev/null || true
+  wait "$PIPELINE" 2>/dev/null || true
+  exit 76
+fi
 
 if ! kill -0 "$VIDEOFEED" 2>/dev/null && kill -0 "$PIPELINE" 2>/dev/null; then
   echo "stream.sh: the video feeder exited — ending the pipeline so systemd restarts both rather than handing a live ffmpeg a new writer" >&2
