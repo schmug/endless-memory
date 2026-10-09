@@ -141,3 +141,22 @@ test('the fifo is held open read-write on a spare descriptor', () => {
 test('the pipeline fails when the renderer fails, not only when ffmpeg does', () => {
   assert.match(SOURCE, /set -[a-z]*e[a-z]*o pipefail|set -o pipefail/);
 });
+
+// The stall watchdog reads ffmpeg's output clock from this file. It sits beside the
+// video fifo so it lands in the unit's RuntimeDirectory in production and in the run's
+// temp dir under the harnesses.
+test('ffmpeg writes -progress beside the video fifo', () => {
+  const args = argv({ VIDEO_FIFO: '/run/endless-memory/video.fifo' });
+
+  assert.ok(indexOfRun(args, ['-progress', '/run/endless-memory/progress']) >= 0,
+    `no -progress beside the fifo in: ${args.join(' ')}`);
+});
+
+// -progress is written once per STATS_PERIOD, so a threshold under two periods would
+// restart a healthy station between two ordinary progress records.
+test('a stall threshold under two progress periods is refused', () => {
+  assert.throws(
+    () => argv({ STATS_PERIOD: '60', STALL_SECONDS: '90' }),
+    (e) => e.status === 64 && /STALL_SECONDS/.test(String(e.stderr)),
+  );
+});

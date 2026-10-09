@@ -295,6 +295,23 @@ Piece D is unaffected. It is decoupled by the **file interface** `videofeed` rea
 always was; the separate unit never bought anything for piece D and cost this failure
 mode.
 
+### A host-local stall watchdog, 2026-10-09
+
+`stream.sh` now watches the output clock itself. ffmpeg writes `-progress` to
+`progress` beside the video fifo once per `STATS_PERIOD`; if `out_time_us` does not
+change for `STALL_SECONDS` (default 120, refused below two periods), `stream.sh` logs
+`DEAD AIR`, ends the pipeline (TERM, then KILL after 5 s, because a wedged ffmpeg's main
+thread is parked too) and exits 76, so `Restart=always` brings it back.
+
+Measured against real ffmpeg 8.1.3 by SIGSTOPping it 30 s into a run with
+`STATS_PERIOD=5 STALL_SECONDS=20`: `stream.sh` exited 76 23 s later, no survivors.
+`ops/supervision.test.mjs` pins both halves with stubs: frozen clock ends the run, an
+advancing one is left alone.
+
+This answers *whether* on the host. It does not replace the off-host watchdog: a host
+that is itself down, or an uplink that YouTube has stopped accepting while ffmpeg's
+clock still advances, is invisible from here.
+
 ## Two things verified rather than asserted, 2026-09-14
 
 ### The fifo holder fd is what keeps a feeder restart from ending the broadcast
