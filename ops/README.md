@@ -793,10 +793,14 @@ signal is `NRestarts` not climbing (the stall watchdog restarts a frozen clock w
 
 Every host-local signal goes quiet when the host does: a Windows reboot waiting for a
 login, WSL shut down, the machine off. So `.github/workflows/on-air.yml` asks YouTube
-instead, every 30 minutes from GitHub's runners, via `ops/onair.mjs`:
+instead, every 10 minutes from GitHub's runners, via `ops/onair.mjs`:
 
-- It calls the YouTube Data API's `search.list` with `eventType=live` on the channel, not on
-  one video id, because a restart on this host can replace the broadcast and its id.
+- It reads the channel's uploads playlist through the YouTube Data API, then asks
+  `videos.list` which of the newest uploads is live. It does not watch one video id,
+  because a restart on this host can replace the broadcast and its id. It does not use
+  `search.list` with `eventType=live` either. That was the first version, and on its first
+  real run on 2026-10-10 it reported "no live broadcast" twice while the public stream was
+  live and audible (#66).
 - If the first answer is not-live, it asks again 5 minutes later, so a restart's gap does
   not alert. Two not-live answers open one issue titled **Station off the air**, and GitHub
   notifies the owner. Later off-air checks add nothing while it is open. The first live
