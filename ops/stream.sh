@@ -8,8 +8,10 @@
 # healthy.
 #
 # Destination is exactly one of:
-#   CF_STREAM_KEY  production — RTMPS into the Cloudflare live input. The URL is
-#                  assembled HERE, so unit files and journald never carry the key.
+#   CF_STREAM_KEY  production — RTMPS to RTMPS_BASE: the Cloudflare live input by
+#                  default, YouTube's ingest on the WSL2 host today (ops/README.md, "The
+#                  production host"). The URL is assembled HERE, so unit files and
+#                  journald never carry the key.
 #   SINK           tier 0 — a local file or `-` with -f null. No network, no metered
 #                  traffic, and no way for a test to reach the production input.
 #
