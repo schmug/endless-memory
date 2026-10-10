@@ -357,12 +357,13 @@ assertion while doing the one thing this design forbids: giving up, into permane
 air.
 
 Fixed, and the test is now section-aware and was watched failing against the old
-placement. Both units now verify clean. Re-check with:
+placement. Both units verified clean. The videofeed unit has since been deleted (see "The
+wedge" above), so only the stream unit is left to check. Re-check with:
 
 ```sh
 docker run --rm -v "$PWD/ops:/units:ro" node:22-slim bash -c \
   'apt-get -qq update >/dev/null && apt-get -qq install -y systemd >/dev/null &&
-   systemd-analyze verify /units/endless-memory-stream.service /units/endless-memory-videofeed.service'
+   systemd-analyze verify /units/endless-memory-stream.service'
 ```
 
 A text assertion over a config file is a proxy for the parser that actually reads it. Where
@@ -649,6 +650,15 @@ was not the beginning of a trend.
 creeping (42557 -> 42566), so the test never tripped, while `assessStarvation` caught the
 same event as 169 s below the pacing floor.
 
+The run did not need a watchdog to end, either. `stream.sh` exited by itself 169 s into the
+outage, and 224 is how a shell reports ffmpeg's `AVERROR(EPIPE)` (−32 mod 256), which means
+ffmpeg gave up on the dead socket. That is inferred from the exit code; ffmpeg's own error line
+was not kept. Under systemd that exit is a restart, so a connection that **dies** already ends
+the pipeline without help. What nothing on the host catches is a connection that **sags** without
+dying. A restart would not fix a slow uplink anyway, and on the direct-to-YouTube host every
+restart ends the broadcast. So production deliberately has no host-local pacing watchdog. The
+gap that remains is the off-host one.
+
 That is worth recording precisely, because it narrows #54: on the live path **pacing is the
 sharper instrument, not stall**. A frozen clock is the wedge's signature; a *crawling* clock
 is what a network outage produces, and only the pacing verdict sees it. Whatever threshold
@@ -808,10 +818,19 @@ there is no live reload by design.
 
 ## Rotate the stream key
 
-The key lives in `/etc/endless-memory/stream.env`, mode 0600, and nowhere else. Rotate
-it in the Cloudflare Stream API, write the new value into that file, then
-`sudo systemctl restart endless-memory-stream`. The YouTube key is held by Cloudflare's
-Live Output, not by this host: rotating it means updating the Live Output.
+The key lives in `/etc/endless-memory/stream.env`, mode 0600, and nowhere else.
+
+**Direct to YouTube (the production host today).** `CF_STREAM_KEY` holds the YouTube
+stream key, despite the name. Make a new one in YouTube Studio's live stream settings,
+write the new value into that file, then `sudo systemctl restart endless-memory-stream`.
+The restart ends the current YouTube broadcast, as every restart on this host does.
+Confirm health with `systemctl is-active` and `systemctl show -p NRestarts`, never
+`systemctl status`, which prints the key (see "The production host").
+
+**Through Cloudflare (the spec's design, not running).** Rotate the input's key in the
+Cloudflare Stream API, write it into the same file, and restart. The YouTube key is then
+held by Cloudflare's Live Output, not by this host, so rotating that one means updating the
+Live Output.
 
 The assembled RTMPS URL is visible to `ps` for any local user, which is accepted only
 because the host is single-tenant with one service account and no other logins. If that
@@ -823,5 +842,10 @@ stops being true, this stops being accepted. `DRY_RUN=1 ops/stream.sh` redacts t
 sudo systemctl stop endless-memory-stream
 ```
 
-For a live broadcast, disable or delete the Cloudflare Live Output **first** — that
-stops the simulcast without tearing down the input — then stop the unit.
+**Direct to YouTube (the production host today):** stopping the unit is the whole
+procedure. YouTube ends the broadcast when the ingest goes quiet. To keep it down across
+a reboot as well, `sudo systemctl disable endless-memory-stream`, and remember that the
+Windows-side keep-alive only keeps WSL running, not the unit.
+
+**Through Cloudflare (not running):** disable or delete the Cloudflare Live Output
+**first**, which stops the simulcast without tearing down the input, then stop the unit.
