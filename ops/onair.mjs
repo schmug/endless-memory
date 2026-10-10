@@ -6,13 +6,17 @@
 // Windows rebooted and nobody has logged in (ops/README.md, "The production host"). The
 // only witness that survives those is one that asks YouTube.
 //
-// How: the YouTube Data API's search.list with eventType=live, scoped to the channel.
-// Not the broadcast's video id: on the direct-to-YouTube host every restart may end
-// one broadcast and start another, so a fixed id would report off-air after the first
-// journal change. Not scraping the watch page: its markup is undocumented and changes.
-// search.list costs 100 quota units of the free 10,000/day, which is what sets the
-// workflow's cadence.
-//
+// How: two YouTube Data API calls, one quota unit each. playlistItems.list reads the
+// channel's uploads playlist (its id is the channel id with UC swapped for UU), which
+// lists a public live broadcast like any other video; videos.list then asks which of
+// the newest few are live right now. Not the broadcast's own video id: on the
+// direct-to-YouTube host a restart may end one broadcast and start another, so a fixed
+// id would report off-air after the first journal change. Not search.list with
+// eventType=live, which is what this first used: on 2026-10-10 it answered "no live
+// broadcast" twice, five minutes apart, while the public stream was live and audible
+// (issue #66). Search is an index, not the source of truth. Not scraping the watch page
+// either: its markup is undocumented and changes.
+
 // What it does about it: one issue titled ALERT_TITLE, opened when the station is off
 // the air and closed when it is back. GitHub notifies the repo owner of both. While the
 // issue stays open, later off-air checks add nothing, so an outage is one notification,
@@ -39,37 +43,58 @@ export const ALERT_TITLE = 'Station off the air';
 // turns out longer than this, raise it rather than alerting on every journal change.
 export const RECHECK_MS = 5 * 60_000;
 
-const SEARCH = 'https://www.googleapis.com/youtube/v3/search';
+const API = 'https://www.googleapis.com/youtube/v3';
 
-// Pure: one search.list response body to a verdict. Exported for the tests.
+// How many of the newest uploads to ask about. The uploads playlist is newest first by
+// publish time, and a live broadcast is published when it starts, so the current one
+// sits at or near the top unless this many videos were published after it went live.
+export const RECENT = 10;
+
+// Pure: an API response that is not a usable list is UNKNOWN, with the API's own reason.
+function failure(status, body) {
+  if (status === 200 && body && Array.isArray(body.items)) return null;
+  return { state: UNKNOWN, reason: body?.error?.message ?? `HTTP ${status}` };
+}
+
+// Pure: one videos.list response body to a verdict. Exported for the tests.
 export function judge(status, body) {
-  if (status !== 200 || !body || !Array.isArray(body.items)) {
-    const reason = body?.error?.message ?? `HTTP ${status}`;
-    return { state: UNKNOWN, reason };
-  }
+  const bad = failure(status, body);
+  if (bad) return bad;
   const live = body.items
     .filter((it) => it?.snippet?.liveBroadcastContent === 'live')
-    .map((it) => it.id?.videoId)
+    .map((it) => it.id)
     .filter(Boolean);
   return live.length
     ? { state: ON_AIR, videoIds: live }
-    : { state: OFF_AIR, reason: 'the channel has no live broadcast' };
+    : { state: OFF_AIR, reason: `none of the channel's ${body.items.length} newest uploads is live` };
+}
+
+export const uploadsPlaylist = (channelId) => `UU${channelId.slice(2)}`;
+
+async function get(fetchImpl, path, params) {
+  const url = new URL(`${API}/${path}`);
+  url.search = new URLSearchParams(params).toString();
+  const res = await fetchImpl(url);
+  let body = null;
+  try { body = await res.json(); } catch { /* judged as unknown */ }
+  return { status: res.status, body };
 }
 
 export async function checkOnce({ apiKey, channelId, fetchImpl = fetch }) {
-  const url = new URL(SEARCH);
-  url.search = new URLSearchParams({
-    part: 'snippet', channelId, eventType: 'live', type: 'video', maxResults: '5', key: apiKey,
-  }).toString();
-  let res;
   try {
-    res = await fetchImpl(url);
+    const uploads = await get(fetchImpl, 'playlistItems', {
+      part: 'contentDetails', playlistId: uploadsPlaylist(channelId), maxResults: String(RECENT), key: apiKey,
+    });
+    // A wrong channel id fails here, as a 404 for the playlist: unknown, not off air.
+    const bad = failure(uploads.status, uploads.body);
+    if (bad) return bad;
+    const ids = uploads.body.items.map((it) => it?.contentDetails?.videoId).filter(Boolean);
+    if (!ids.length) return { state: OFF_AIR, reason: 'the channel has no uploads' };
+    const videos = await get(fetchImpl, 'videos', { part: 'snippet', id: ids.join(','), key: apiKey });
+    return judge(videos.status, videos.body);
   } catch (err) {
     return { state: UNKNOWN, reason: `request failed: ${err.message}` };
   }
-  let body = null;
-  try { body = await res.json(); } catch { /* judged below as unknown */ }
-  return judge(res.status, body);
 }
 
 // Check, and if the first answer is OFF_AIR, wait and ask again. Only two OFF_AIR answers
