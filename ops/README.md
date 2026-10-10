@@ -27,6 +27,7 @@ ops/measure.mjs                       level, pacing, A/V-sync and stall parsers 
 ops/tier0.mjs                         the local-sink proof run (`npm run tier0`)
 ops/live.mjs                          the same pipeline against RTMPS (`npm run live`)
 ops/endless-memory-stream.service     systemd unit: render -> ffmpeg -> and the feeder
+ops/onair.mjs                         the off-host "is it live?" check, run by .github/workflows/on-air.yml
 ```
 
 ## Run tier 0
@@ -787,6 +788,31 @@ cause, unconfirmed: ffmpeg ends periodic stats with `\r` and only the last with 
 journald splits on `\n`. So journald carries no progress signal; the host-local liveness
 signal is `NRestarts` not climbing (the stall watchdog restarts a frozen clock within
 120 s), and `/run/endless-memory/progress`, readable only by the `endless` user.
+
+## The off-host check — "is it live?", 2026-10-10
+
+Every host-local signal goes quiet when the host does: a Windows reboot waiting for a
+login, WSL shut down, the machine off. So `.github/workflows/on-air.yml` asks YouTube
+instead, every 30 minutes from GitHub's runners, via `ops/onair.mjs`:
+
+- It calls the YouTube Data API's `search.list` with `eventType=live` on the channel, not on
+  one video id, because a restart on this host can replace the broadcast and its id.
+- If the first answer is not-live, it asks again 5 minutes later, so a restart's gap does
+  not alert. Two not-live answers open one issue titled **Station off the air**, and GitHub
+  notifies the owner. Later off-air checks add nothing while it is open. The first live
+  answer comments the new watch link and closes it.
+- An API error (bad key, spent quota, network) is **unknown**, not off air. It opens no
+  issue and fails the workflow run, which GitHub reports separately.
+
+Setup, once, under the repo's Settings → Secrets and variables → Actions: a **secret**
+`YOUTUBE_API_KEY` (a Google Cloud API key with YouTube Data API v3 enabled) and a
+**variable** `YOUTUBE_CHANNEL_ID` (the channel's `UC…` id). The job is skipped until the
+variable exists. Run it by hand from the Actions tab (`workflow_dispatch`) to see it work.
+
+Not yet observed: how long a restart leaves the channel not-live. If it is longer than the
+5-minute recheck, `RECHECK_MS` in `ops/onair.mjs` has to grow, or every journal change will
+open an issue. It also cannot see a broadcast that is live but silent or frozen. YouTube
+reports that as live.
 
 ## Install (exercised 2026-10-09 on the WSL2 host — see "The production host")
 
