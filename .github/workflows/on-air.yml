@@ -1,0 +1,44 @@
+name: On air
+
+# The off-host "is it live?" check (ops/onair.mjs). Scheduled only, never on a push or
+# pull request, so it adds no check to PRs: the required `test` check on main is
+# untouched.
+#
+# Every 30 minutes because search.list costs 100 of the YouTube Data API's free
+# 10,000 units a day. 48 runs is 4,800 units, and the recheck that runs only when the
+# first answer is not-live can at most double that, still inside the quota. GitHub's
+# schedule is best-effort, so expect runs to land late now and then.
+#
+# Needs, under Settings > Secrets and variables > Actions:
+#   secret   YOUTUBE_API_KEY     a Google Cloud API key with YouTube Data API v3 enabled
+#   variable YOUTUBE_CHANNEL_ID  the channel's UC... id
+# Until the variable exists the job is skipped rather than failing every half hour.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+concurrency:
+  group: on-air
+  cancel-in-progress: false
+
+jobs:
+  on-air:
+    if: vars.YOUTUBE_CHANNEL_ID != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - run: node ops/onair.mjs
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          YOUTUBE_CHANNEL_ID: ${{ vars.YOUTUBE_CHANNEL_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
