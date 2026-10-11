@@ -607,6 +607,36 @@ ops/endless-memory-videoframe.service
    frame instead of the placeholder and looking at the result. If it is soft, the cheap
    lever is on this side — fewer, larger glyphs (a 128×28 grid was prototyped and is
    legible, if coarser) — not piece E's bitrate.
+
+   **Closed 2026-10-11: legible at 800 kbps; the 160×35 grid stays.** `ops/videoframe.mjs
+   run` rendered the committed archive still (ARCHIVE state, network unreachable) and
+   `npm run tier0` encoded it through the production `stream.sh` and `videofeed.sh`, with
+   `FRAME_SOURCE` pointing at piece D's PNG. Frames were pulled from the FLV at 120 s and
+   121 s and compared with the source PNG:
+
+   | frame | SSIM | PSNR |
+   |---|---|---|
+   | encoded, at the 2 s keyframe | 0.960 | 24.2 dB |
+   | encoded, one second later | 0.972 | 27.1 dB |
+
+   At 1:1 every glyph is distinguishable, the ramp's tone steps hold, and the skyline,
+   shore and keeper's house read as in the source. Zoomed 3×, the keyframe shows ringing
+   around the dense `@`/`%` rows of the sky; at viewing size it does not register.
+
+   **The cost is the whole budget, and that is the finding worth keeping.** The ASCII
+   field held the encoder at its 800 kbps cap at quantiser 34–38 for the whole run, where
+   the placeholder through the same pipeline settled at about 70 kbps and quantiser 11.
+   The prediction above, that P-frames would be nearly empty, is true but does not save
+   it: `-g 60` at 30 fps re-encodes the full field every 2 s. There is no headroom, so a
+   busier daytime frame than this one will come out softer, not larger. If a live frame
+   is ever judged soft, the levers in order are the 128×28 grid on this side, then a
+   longer GOP on piece E's side, which is a broadcast change and needs its own tier 0.
+
+   Measured on ffmpeg 6.1.1 in a cloud sandbox, not the host's 8.1.3, and only on our own
+   encode: YouTube transcodes again, and that second pass is not covered here. In that
+   sandbox `npm run tier0` also never ended at `--minutes`, with the placeholder as well
+   as with piece D, so its verdict report was not produced; the frames above came from
+   the FLV it wrote.
 2. **How often does the overlay layout change?** The crop is a fixed pixel rectangle
    against an overlay NPS controls. Nobody knows its history. Until somebody does, the
    dimension check in "The crop" is the guard.
@@ -667,7 +697,8 @@ ops/endless-memory-videoframe.service
    That comparison was not made in this spec and is the one measurement it owes.
 10. **Open question 1 is closed by observation.** A real ASCII frame is fed through piece
    E's tier-0 run and the encoded result is looked at. The verdict — legible, or soft
-   enough to need a coarser grid — is recorded in this file before launch.
+   enough to need a coarser grid — is recorded in this file before launch. **Recorded under open
+   question 1, 2026-10-11: legible; 160×35 kept.**
 11. **The § 403 notice exists.** Wherever the stream is described publicly, a notice
     states that no copyright protection is claimed in the US Government works it
     incorporates. This is the one thing the rights analysis actually requires of us, and
