@@ -15,4 +15,7 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      # ops/videoframe.test.mjs decodes synthetic frames through the real ffmpeg
+      # call, the same host dependency piece E already has.
+      - run: command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg)
       - run: npm test
