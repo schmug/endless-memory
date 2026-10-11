@@ -1,7 +1,7 @@
 # Visual layer (piece D) — design
 
 Date: 2026-09-14
-Status: specified, not implemented
+Status: stage 1 implemented offline (`ops/videoframe.mjs`, `ops/asciiframe.mjs`, #64); not on the air
 
 ## Problem
 

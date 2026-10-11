@@ -13,3 +13,8 @@ listen.url
 .env*
 .dev.vars
 ops/secrets/
+
+# Piece D's published frame, rewritten every two seconds by ops/videoframe.mjs. The
+# archive still beside it (ops/frames/archive-west.jpeg) is committed on purpose.
+ops/frames/*.png
+ops/frames/*.tmp-*
