@@ -31,6 +31,11 @@ ExecStart=/bin/bash -o pipefail /opt/endless-memory/ops/stream.sh
 # The RTMPS URL is assembled inside stream.sh, so journald records the shape, not a key.
 EnvironmentFile=/etc/endless-memory/stream.env
 
+# Piece D's picture, written by endless-memory-videoframe.service. videofeed reads it if
+# it is fresh and falls back to the last good frame or the placeholder if it is not, so
+# the stream does not depend on that unit running. Not a secret, so not in stream.env.
+Environment=FRAME_SOURCE=/var/lib/endless-memory-frames/boston-light-west.png
+
 Restart=always
 RestartSec=2
 
