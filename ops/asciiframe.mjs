@@ -32,6 +32,13 @@ export const HIGH_PERCENTILE = 0.98;
 // floor from ~11% glyph churn to ~4% and settles a real change in 2-3 frames.
 export const ALPHA = 0.4;
 
+// Sticky glyphs: a cell keeps its glyph until the smoothed tone is more than this far
+// from that glyph's centre, i.e. 1.1 ramp steps past the edge of its own band. The EMA
+// alone left night at ~24% churn on the 2026-10-11 log (spans of 16-17 levels); with
+// this, noise that small moves the ink and not the shape. A real change still crosses
+// the band within a few frames — see "sticky glyphs still follow a real change".
+export const STICKY_BAND = 1.6 / RAMP.length;
+
 // One cell is 8x16, so 160 columns are exactly 1280 px and 35 rows are 560 px.
 export const CELL_W = 8;
 export const CELL_H = 16;
@@ -39,8 +46,16 @@ const PANEL_TOP = 40;
 export const PANEL_HEIGHT = ROWS * CELL_H;
 
 // Light glyphs on piece E's near-black ground. The caption is dimmer on purpose: a
-// footnote, not a chyron.
+// footnote, not a chyron. GLYPH_INK is the mono ink, used when no camera ink is given.
 export const GLYPH_INK = [0xc6, 0xd0, 0xd8];
+
+// Camera ink: each glyph takes the hue of the camera at its cell, with saturation
+// boosted around the cell's grey and the brightest channel pinned at INK_PEAK, so a
+// dark cell is still a legible glyph — tone is carried by the glyph, colour by the ink.
+// No channel goes below MIN_INK. Chosen by eye on 2026-10-12 against four alternatives.
+export const INK_SATURATION = 2.2;
+export const INK_PEAK = 215;
+export const MIN_INK = 40;
 export const CAPTION_INK = [0x5c, 0x68, 0x72];
 
 // The ramp glyphs, 8 wide by 16 tall, as row -> pattern. Tone is what matters, so
@@ -144,19 +159,48 @@ export function smooth(previous, levelled, alpha = ALPHA) {
   return out;
 }
 
-// 0..1 tone to a ramp glyph, one row of text per grid row.
-export function toGlyphs(tone) {
+// 0..1 tone to a ramp glyph, one row of text per grid row. With `previous` (the last
+// render's lines) each cell keeps its old glyph while the tone stays within STICKY_BAND
+// of that glyph's centre; without it, this is the plain mapping.
+export function toGlyphs(tone, previous = null) {
   const last = RAMP.length - 1;
   const lines = [];
   for (let r = 0; r < ROWS; r++) {
     let line = '';
     for (let c = 0; c < COLS; c++) {
       const v = tone[r * COLS + c];
+      if (previous) {
+        const held = RAMP.indexOf(previous[r][c]);
+        if (Math.abs(v - (held + 0.5) / RAMP.length) <= STICKY_BAND) { line += RAMP[held]; continue; }
+      }
       line += RAMP[Math.min(last, Math.max(0, Math.floor(v * RAMP.length)))];
     }
     lines.push(line);
   }
   return lines;
+}
+
+// The camera's colour grid (COLS*ROWS RGB triples, 0..255, possibly smoothed) to one
+// ink per cell, as a COLS*ROWS*3 Uint8Array that rasterise() takes.
+export function cameraInk(rgb) {
+  if (rgb.length !== COLS * ROWS * 3) throw new Error(`colour grid is ${rgb.length} values, expected ${COLS * ROWS * 3}`);
+  const ink = new Uint8Array(rgb.length);
+  for (let i = 0; i < rgb.length; i += 3) {
+    const mean = (rgb[i] + rgb[i + 1] + rgb[i + 2]) / 3;
+    const sat = [0, 1, 2].map((k) => mean + (rgb[i + k] - mean) * INK_SATURATION);
+    const scale = INK_PEAK / Math.max(1, ...sat);
+    for (let k = 0; k < 3; k++) ink[i + k] = Math.round(Math.min(255, Math.max(MIN_INK, sat[k] * scale)));
+  }
+  return ink;
+}
+
+// The mean per-channel ink change between two renders, as a share of full scale. Logged
+// beside churn: with sticky glyphs, night noise shows up here instead.
+export function inkShift(before, after) {
+  if (!before) return null;
+  let sum = 0;
+  for (let i = 0; i < after.length; i++) sum += Math.abs(after[i] - before[i]);
+  return sum / after.length / 255;
 }
 
 // The share of cells whose glyph changed between two renders. The criterion 8 bar
@@ -186,8 +230,9 @@ export function captionText(text) {
   return text.toUpperCase().replace(/—/g, '-');
 }
 
-// The glyph field and its caption, rasterised to a 1280x720 RGB buffer.
-export function rasterise(lines, caption) {
+// The glyph field and its caption, rasterised to a 1280x720 RGB buffer. `ink` is one RGB
+// triple per cell (cameraInk()); without it every glyph is GLYPH_INK.
+export function rasterise(lines, caption, ink = null) {
   if (lines.length !== ROWS || lines.some((l) => l.length !== COLS)) {
     throw new Error(`expected ${ROWS} lines of ${COLS} glyphs`);
   }
@@ -198,13 +243,14 @@ export function rasterise(lines, caption) {
     for (let c = 0; c < COLS; c++) {
       const rows = RAMP_GLYPHS[lines[r][c]];
       if (!rows) throw new Error(`'${lines[r][c]}' is not a ramp glyph`);
+      const cell = ink ? ink.subarray((r * COLS + c) * 3, (r * COLS + c) * 3 + 3) : GLYPH_INK;
       for (const [dy, pattern] of Object.entries(rows)) {
         for (let dx = 0; dx < CELL_W; dx++) {
           if (pattern[dx] !== '#') continue;
           const at = ((PANEL_TOP + r * CELL_H + Number(dy)) * WIDTH + c * CELL_W + dx) * 3;
-          raster[at] = GLYPH_INK[0];
-          raster[at + 1] = GLYPH_INK[1];
-          raster[at + 2] = GLYPH_INK[2];
+          raster[at] = cell[0];
+          raster[at + 1] = cell[1];
+          raster[at + 2] = cell[2];
         }
       }
     }
@@ -227,7 +273,7 @@ export function rasterise(lines, caption) {
   return raster;
 }
 
-export const renderPng = (lines, caption) => encodePng(rasterise(lines, caption), WIDTH, HEIGHT);
+export const renderPng = (lines, caption, ink = null) => encodePng(rasterise(lines, caption, ink), WIDTH, HEIGHT);
 
 // The caption line the renderer draws: place, view, the frame's own capture time and
 // the ladder's verdict. `capturedAt` is null for the archive still, whose date is

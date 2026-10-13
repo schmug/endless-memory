@@ -6,6 +6,9 @@
 //   8. Night is measured over a full 24 hours: smoothed glyph churn stays at or below 8%
 //      through the overnight hours.
 //
+// Since camera ink (2026-10-12) the log also carries `inkShift`, where sticky glyphs
+// move night noise to. It is reported per hour beside churn but gates nothing yet.
+//
 // Pure apart from the CLI at the bottom, so ops/framelog.test.mjs drives it with
 // synthetic logs. Specified in docs/superpowers/specs/2026-09-14-visual-layer-design.md.
 
@@ -70,12 +73,13 @@ export function summarise(events) {
   const nothingNew = (results.unchanged || 0) + (results.repeat || 0);
   const notModifiedShare = nothingNew ? (results.unchanged || 0) / nothingNew : null;
 
-  const byHour = Array.from({ length: 24 }, () => ({ churn: [], span: [] }));
+  const byHour = Array.from({ length: 24 }, () => ({ churn: [], span: [], inkShift: [] }));
   for (const p of polls) {
     if (p.result !== 'frame') continue;
     const h = byHour[localHour(p.at)];
     if (typeof p.churn === 'number') h.churn.push(p.churn);
     if (typeof p.span === 'number') h.span.push(p.span);
+    if (typeof p.inkShift === 'number') h.inkShift.push(p.inkShift);
   }
   const hours = byHour.map((h, hour) => ({
     hour,
@@ -83,6 +87,7 @@ export function summarise(events) {
     medianChurn: quantile(h.churn, 0.5),
     p90Churn: quantile(h.churn, 0.9),
     medianSpan: quantile(h.span, 0.5),
+    medianInkShift: quantile(h.inkShift, 0.5),
   }));
 
   const night = hours.filter((h) => NIGHT_HOURS.includes(h.hour));
@@ -132,10 +137,10 @@ export function formatReport(s, skipped = 0) {
   lines.push(`Criterion 8, overnight churn at or below ${pct(NIGHT_CHURN_BAR)}: ${s.criterion8.ok ? 'PASS' : 'FAIL'}`);
   if (s.criterion8.uncovered.length) lines.push(`  no frames logged at local hour(s) ${s.criterion8.uncovered.join(', ')}; the run did not cover the night`);
   if (s.criterion8.overBar.length) lines.push(`  median churn over the bar at local hour(s) ${s.criterion8.overBar.join(', ')}`);
-  lines.push(`  hour (${TIME_ZONE})  frames  median churn  p90 churn  median span`);
+  lines.push(`  hour (${TIME_ZONE})  frames  median churn  p90 churn  median span  median ink shift`);
   for (const h of s.byHour) {
     if (!h.frames) continue;
-    lines.push(`  ${String(h.hour).padStart(2, '0')}:00              ${String(h.frames).padStart(4)}  ${pct(h.medianChurn).padStart(12)}  ${pct(h.p90Churn).padStart(9)}  ${h.medianSpan === null ? '-' : String(h.medianSpan).padStart(11)}`);
+    lines.push(`  ${String(h.hour).padStart(2, '0')}:00              ${String(h.frames).padStart(4)}  ${pct(h.medianChurn).padStart(12)}  ${pct(h.p90Churn).padStart(9)}  ${(h.medianSpan === null ? '-' : String(h.medianSpan)).padStart(11)}  ${pct(h.medianInkShift).padStart(16)}`);
   }
   lines.push('');
   lines.push(`Ladder transitions: ${s.transitions.length ? '' : 'none'}`);

@@ -82,3 +82,21 @@ test('repeats count against the 304 share', () => {
   assert.equal(s.notModifiedShare, 0.25);
   assert.equal(s.criterion3.ok, false);
 });
+
+// Camera ink (2026-10-12) moves night noise from glyph shape into ink colour, so the
+// per-hour ink shift is reported beside churn. It is a measurement, not yet a gate: no
+// bar exists until a night of it has been looked at.
+test('ink shift is reported per hour, and a log without it still reads', () => {
+  const withInk = day().split('\n').map((l) => {
+    const e = JSON.parse(l);
+    if (e.result === 'frame') e.inkShift = localHour(e.at) === 3 ? 0.05 : 0.01;
+    return JSON.stringify(e);
+  }).join('\n');
+  const s = summarise(parseLog(withInk).events);
+  assert.equal(s.byHour[3].medianInkShift, 0.05);
+  assert.equal(s.byHour[12].medianInkShift, 0.01);
+  assert.ok(s.criterion8.ok, 'ink shift must not gate criterion 8');
+  assert.match(formatReport(s), /median ink shift/);
+  assert.match(formatReport(s), /03:00 .* 5\.0%/);
+  assert.equal(summarise(parseLog(day()).events).byHour[3].medianInkShift, null);
+});

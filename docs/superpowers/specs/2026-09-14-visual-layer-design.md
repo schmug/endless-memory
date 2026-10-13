@@ -688,6 +688,30 @@ ops/endless-memory-videoframe.service
    continuous 24-hour log is read, and **smoothed churn stays at or below 8%** through the
    overnight hours. This is the criterion that closes the one thing this spec observed at
    21:00 and not at 03:00. If it fails, the night answer changes before launch.
+
+   **Measured 2026-10-11 → 12, and failed.** A 21.1-hour log from the WSL2 host
+   (`ops/framelog.mjs`; criterion 3 passed in the same run: 1253 polls, shortest gap
+   60.4 s, 100% of no-change polls a 304). Median smoothed churn by Boston hour: 00:00
+   15.9%, 01:00 24.4%, 02:00 24.2%, 03:00 8.1%, 04:00 10.3%, 05:00 25.7%, against 3–5%
+   from 07:00 to 17:00. The night span fell to **16–17 levels**, not the 76 observed at
+   21:00, so the stretch amplifies noise far past what α = 0.4 absorbs.
+
+   **The night answer changed: sticky glyphs and camera ink** (`STICKY_BAND`,
+   `cameraInk` in `ops/asciiframe.mjs`). A cell keeps its glyph until its smoothed tone is
+   1.1 ramp steps past the edge of that glyph's band, so small changes cannot change a
+   glyph's shape. Each glyph is inked with the camera's own colour at its cell, smoothed
+   with the same EMA, saturation ×2.2 and peak channel pinned at 215 so dark cells stay
+   legible. It was chosen by eye on 2026-10-12 from five variants rendered from four
+   real daytime frames and a **simulated** night. The simulation squeezed a day frame into
+   17 levels and added noise tuned so the old renderer reproduced the measured ~24%. On
+   that simulation glyph churn fell from 23.3% to 0.7% and mean ink shift was 8/255 per
+   frame. On the real day frames, churn was 0.05%. **The night figures are a simulation;
+   the real night has not been measured with this renderer.**
+
+   The cost is that a cell can settle one ramp step from the plain mapping and stay
+   there. The log now carries `inkShift` beside `churn`, and `framelog.mjs` reports it per
+   hour. The 8% churn bar stands. Ink shift has no bar yet; set one after a real night of
+   it has been looked at.
 9. **The auto-level is verified to be load-bearing, by removing it.** A recorded night
    frame rendered with a fixed 0–255 mapping must produce the dead output recorded above —
    a near-uniform field. This exists so that a later reader who is tempted to simplify the
