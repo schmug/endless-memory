@@ -6,7 +6,8 @@
 //
 //   - THE CROP HAPPENS IN decodeCropped() AND NOWHERE ELSE. It is the only function in
 //     piece D that hands JPEG bytes to a decoder, the crop is in the same ffmpeg filter
-//     chain as the decode, and nothing but the 160x35 cropped, downscaled grid comes out.
+//     chain as the decode, and nothing but the 160x35 cropped, downscaled grid — its
+//     luminance and its colour — comes out.
 //     The uncropped bytes are never written to disk. Three trademarks are burned into
 //     the top band of every live frame; there is no code path that renders it.
 //   - It refuses any frame that is not 3840x2160 rather than cropping by ratio. The crop
@@ -26,7 +27,7 @@ import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createLiveness, ARCHIVE } from './liveness.mjs';
 import {
-  COLS, ROWS, autoLevel, smooth, toGlyphs, churn, renderPng, captionLine,
+  COLS, ROWS, autoLevel, smooth, toGlyphs, churn, cameraInk, inkShift, renderPng, captionLine,
 } from './asciiframe.mjs';
 
 export const SOURCE_URL = 'https://www.nps.gov/webcams-boha/west-001.jpeg';
@@ -78,9 +79,13 @@ export function jpegSize(buf) {
   return null;
 }
 
-// THE decode call site. JPEG bytes in, a 160x35 Uint8Array of cropped luminance out.
-// The crop and the area-averaging downscale run in the same ffmpeg filter chain as
-// the decode, and the bytes travel over stdin and stdout only.
+// THE decode call site. JPEG bytes in, the cropped 160x35 grid out: `luma`, one byte a
+// cell, and `rgb`, three. The crop and the area-averaging downscale run in the same
+// ffmpeg filter chain as the decode, and the bytes travel over stdin and stdout only.
+//
+// The output is full-range yuvj444p, whose Y plane is byte-identical to the `gray` this
+// used to ask for (checked on archive-west.jpeg, 2026-10-12): adding colour did not move
+// the luminance the glyphs are chosen from. Cb and Cr become RGB with the JFIF matrix.
 export function decodeCropped(jpeg, { ffmpeg = 'ffmpeg' } = {}) {
   const size = jpegSize(jpeg);
   if (!size) throw new RefusedFrame('not a JPEG with a readable frame header');
@@ -90,17 +95,30 @@ export function decodeCropped(jpeg, { ffmpeg = 'ffmpeg' } = {}) {
   const result = spawnSync(ffmpeg, [
     '-hide_banner', '-loglevel', 'error', '-nostdin',
     '-f', 'jpeg_pipe', '-i', 'pipe:0',
-    '-vf', `${CROP},scale=${COLS}:${ROWS}:flags=area,format=gray`,
+    '-vf', `${CROP},scale=${COLS}:${ROWS}:flags=area,format=yuvj444p`,
     '-frames:v', '1', '-f', 'rawvideo', 'pipe:1',
   ], { input: jpeg, maxBuffer: 1 << 20 });
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new RefusedFrame(`ffmpeg could not decode the frame: ${String(result.stderr).trim()}`);
   }
-  if (result.stdout.length !== COLS * ROWS) {
-    throw new RefusedFrame(`ffmpeg returned ${result.stdout.length} bytes, expected ${COLS * ROWS}`);
+  const cells = COLS * ROWS;
+  if (result.stdout.length !== cells * 3) {
+    throw new RefusedFrame(`ffmpeg returned ${result.stdout.length} bytes, expected ${cells * 3}`);
   }
-  return new Uint8Array(result.stdout);
+  const planes = new Uint8Array(result.stdout);
+  const luma = planes.slice(0, cells);
+  const rgb = new Uint8Array(cells * 3);
+  const clamp = (v) => Math.min(255, Math.max(0, Math.round(v)));
+  for (let i = 0; i < cells; i++) {
+    const y = planes[i];
+    const cb = planes[cells + i] - 128;
+    const cr = planes[2 * cells + i] - 128;
+    rgb[i * 3] = clamp(y + 1.402 * cr);
+    rgb[i * 3 + 1] = clamp(y - 0.344136 * cb - 0.714136 * cr);
+    rgb[i * 3 + 2] = clamp(y + 1.772 * cb);
+  }
+  return { luma, rgb };
 }
 
 // The wait before the next poll. Success: exactly the cadence. After n consecutive
@@ -159,14 +177,18 @@ export function createPoller({ fetch = globalThis.fetch, url = SOURCE_URL, userA
 // and the frame that follows from both. No timers and no filesystem — the run loop
 // below drives it, and the tests drive it with a hand-held clock.
 export function createVideoFrame({ now, decode = decodeCropped, archiveGrid, log = () => {} }) {
-  if (!archiveGrid || archiveGrid.length !== COLS * ROWS) {
+  if (archiveGrid?.luma?.length !== COLS * ROWS || archiveGrid?.rgb?.length !== COLS * ROWS * 3) {
     throw new Error('createVideoFrame needs the decoded archive still: it is what renders on a cold start');
   }
   const liveness = createLiveness({ now });
-  const archiveLines = toGlyphs(autoLevel(archiveGrid).levelled);
+  const archiveLines = toGlyphs(autoLevel(archiveGrid.luma).levelled);
+  const archiveInk = cameraInk(archiveGrid.rgb);
 
   let acceptedHash = null;  // the newest frame that decoded, which liveness also holds
   let tone = null;          // the smoothed, levelled grid of the live picture
+  let colour = null;        // the smoothed colour grid of the live picture, same EMA
+  let liveLines = null;     // the live glyphs, sticky against the previous live render
+  let liveInk = null;
   let capturedAt = null;    // that frame's Last-Modified, or its fetch time
   let lastState = ARCHIVE;
   let lastLines = null;
@@ -193,31 +215,42 @@ export function createVideoFrame({ now, decode = decodeCropped, archiveGrid, log
       log({ event: 'poll', result: 'refused', status: 200, reason: e.message });
       return;
     }
-    const { levelled, span } = autoLevel(grid);
+    const { levelled, span } = autoLevel(grid.luma);
     // Coming back from the archive still, the average restarts at this frame: blending
     // the archive into a picture captioned live would show something that is not now.
-    tone = lastState === ARCHIVE ? Float64Array.from(levelled) : smooth(tone, levelled);
+    // The same goes for the colour, and for the glyphs' stickiness.
+    const fresh = lastState === ARCHIVE;
+    tone = fresh ? Float64Array.from(levelled) : smooth(tone, levelled);
+    colour = fresh ? Float64Array.from(grid.rgb) : smooth(colour, grid.rgb);
     acceptedHash = outcome.hash;
     const parsed = outcome.lastModified ? Date.parse(outcome.lastModified) : NaN;
     capturedAt = Number.isFinite(parsed) ? parsed : now();
     liveness.record({ kind: 'frame', hash: outcome.hash });
 
-    const lines = toGlyphs(tone);
-    log({ event: 'poll', result: 'frame', status: 200, span, churn: churn(lastLines, lines), lastModified: outcome.lastModified ?? null });
+    const previousInk = fresh ? null : liveInk;
+    liveLines = toGlyphs(tone, fresh ? null : liveLines);
+    liveInk = cameraInk(colour);
+    log({
+      event: 'poll', result: 'frame', status: 200, span,
+      churn: churn(lastLines, liveLines), inkShift: inkShift(previousInk, liveInk),
+      lastModified: outcome.lastModified ?? null,
+    });
   }
 
   // What to draw now. Callable at any time: during an outage nothing is recorded and
   // the picture still has to age down the ladder.
   function frame() {
     const status = liveness.status();
-    const lines = status.state === ARCHIVE || tone === null ? archiveLines : toGlyphs(tone);
-    const caption = status.state === ARCHIVE || tone === null
+    const archived = status.state === ARCHIVE || liveLines === null;
+    const lines = archived ? archiveLines : liveLines;
+    const ink = archived ? archiveInk : liveInk;
+    const caption = archived
       ? captionLine({ capturedAt: null, status: status.caption })
       : captionLine({ capturedAt, status: status.caption });
     if (status.state !== lastState) log({ event: 'state', from: lastState, to: status.state, ageMs: status.ageMs, frozen: status.frozen });
     lastState = status.state;
     lastLines = lines;
-    return { state: status.state, lines, caption };
+    return { state: status.state, lines, ink, caption };
   }
 
   return { record, frame };
@@ -241,6 +274,7 @@ export async function run({ out = DEFAULT_OUT, archive = DEFAULT_ARCHIVE, poller
   let failures = 0;
   let nextPollAt = now();
   let cachedKey = null;
+  let cachedInk = null;
   let cachedPng = null;
 
   for (;;) {
@@ -250,9 +284,10 @@ export async function run({ out = DEFAULT_OUT, archive = DEFAULT_ARCHIVE, poller
       failures = outcome.kind === 'error' ? failures + 1 : 0;
       nextPollAt = now() + nextDelay(failures);
     }
-    const { lines, caption } = vf.frame();
+    const { lines, ink, caption } = vf.frame();
     const key = caption + '\n' + lines.join('\n');
-    if (key !== cachedKey) { cachedPng = renderPng(lines, caption); cachedKey = key; }
+    // Ink is compared by identity: frame() hands back the same array until a new frame lands.
+    if (key !== cachedKey || ink !== cachedInk) { cachedPng = renderPng(lines, caption, ink); cachedKey = key; cachedInk = ink; }
     try { publish(out, cachedPng); } catch (e) { log({ event: 'publish-failed', reason: e.message }); }
     await sleep(REPUBLISH_MS);
   }
@@ -274,8 +309,9 @@ export async function fetchArchive(path = DEFAULT_ARCHIVE, { fetch = globalThis.
 // One recorded frame through the real ingest path to a PNG, for checking the crop by
 // eye (criterion 1) and for feeding tier 0 a real ASCII frame (open question 1).
 export function renderRecorded(jpeg) {
-  const lines = toGlyphs(autoLevel(decodeCropped(jpeg)).levelled);
-  return { lines, png: renderPng(lines, captionLine({ capturedAt: null, status: 'recorded frame - not live' })) };
+  const { luma, rgb } = decodeCropped(jpeg);
+  const lines = toGlyphs(autoLevel(luma).levelled);
+  return { lines, png: renderPng(lines, captionLine({ capturedAt: null, status: 'recorded frame - not live' }), cameraInk(rgb)) };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -4,7 +4,7 @@ import { inflateSync } from 'node:zlib';
 import {
   COLS, ROWS, RAMP, ALPHA, WIDTH, HEIGHT, GLYPH_INK,
   glyphCoverage, autoLevel, fixedLevel, smooth, toGlyphs, churn, rasterise, renderPng,
-  captionLine, captionText,
+  captionLine, captionText, cameraInk, inkShift, MIN_INK,
 } from './asciiframe.mjs';
 import { isCompletePng } from './videofeed.mjs';
 import { ARCHIVE_DATE } from './liveness.mjs';
@@ -156,4 +156,83 @@ test('the caption names the place, the view and the frame time in UTC', () => {
   assert.equal(captionLine({ capturedAt: null, status: `archive ${ARCHIVE_DATE} — not live` }),
     `Boston Light, west - archive ${ARCHIVE_DATE} — not live`);
   assert.equal(captionText('archive 2025-01-10 — not live'), 'ARCHIVE 2025-01-10 - NOT LIVE');
+});
+
+// Criterion 8 failed on the 2026-10-11 24-hour log: at a night span of 16-17 levels the
+// auto-level turns sensor noise into ~24% smoothed churn. Sticky glyphs keep a cell's
+// glyph until its tone has clearly left that glyph's band, so the noise shows as a shift
+// in ink rather than a change of shape.
+test('sticky glyphs hold through night-level noise that boils the plain mapping', () => {
+  const r = rng(5);
+  const scene = grid((row, col) => 0.5 + 0.4 * Math.sin(col / 13) * Math.cos(row / 5));
+  // Noise large against a ramp step (0.1): what a 17-level span does after the stretch.
+  const noisy = () => Float64Array.from(scene, (v) => v + (r() - 0.5) * 0.5);
+  let tone = null; let plainPrev = null; let stickyPrev = null;
+  let plain = 0; let sticky = 0; let n = 0;
+  for (let i = 0; i < 40; i++) {
+    tone = smooth(tone, noisy());
+    const p = toGlyphs(tone);
+    const s = toGlyphs(tone, stickyPrev);
+    if (i >= 10) { plain += churn(plainPrev, p); sticky += churn(stickyPrev, s); n++; }
+    plainPrev = p; stickyPrev = s;
+  }
+  assert.ok(plain / n > 0.15, `the noise is not night-like: plain churn ${(plain / n).toFixed(3)}`);
+  assert.ok(sticky / n <= 0.08, `sticky churn ${(sticky / n).toFixed(3)} is over the 8% bar`);
+});
+
+// The price of the band: a cell can settle one ramp step short of the plain mapping and
+// stay there. Never more than one, and a real change still moves it on the first frame.
+test('sticky glyphs still follow a real change, to within one ramp step', () => {
+  let tone = smooth(null, grid(() => 0.1));
+  let lines = toGlyphs(tone);
+  const step = (a, b) => Math.abs(RAMP.indexOf(a[0][0]) - RAMP.indexOf(b[0][0]));
+  for (let i = 1; i <= 20; i++) {
+    tone = smooth(tone, grid(() => 0.9));
+    const before = lines;
+    lines = toGlyphs(tone, lines);
+    if (i === 1) assert.notDeepEqual(lines, before, 'the first frame after the step changed nothing');
+    if (i >= 5) assert.ok(step(lines, toGlyphs(tone)) <= 1, `frame ${i}: more than one step behind`);
+  }
+});
+
+test('with no previous render, sticky glyphs are the plain mapping', () => {
+  const tone = grid((row, col) => col / COLS);
+  assert.deepEqual(toGlyphs(tone, null), toGlyphs(tone));
+});
+
+// The ink is the camera's colour at that cell: its hue, saturation boosted, its value
+// pinned bright so the glyph stays legible on the near-black ground.
+test('camera ink keeps the hue, and never drops a glyph below legible', () => {
+  const rgb = new Float64Array(COLS * ROWS * 3);
+  const cell = (i, c) => rgb.set(c, i * 3);
+  cell(0, [120, 120, 120]);   // grey sky
+  cell(1, [40, 70, 160]);     // blue water
+  cell(2, [3, 2, 1]);         // near black
+  const ink = cameraInk(rgb);
+  assert.equal(ink.length, COLS * ROWS * 3);
+  const at = (i) => [...ink.subarray(i * 3, i * 3 + 3)];
+  const [gr, gg, gb] = at(0);
+  assert.ok(gr === gg && gg === gb, `grey is not neutral: ${at(0)}`);
+  const [br, bg, bb] = at(1);
+  assert.ok(bb > bg && bg > br, `blue is not blue: ${at(1)}`);
+  for (let i = 0; i < 3; i++) assert.ok(Math.max(...at(i)) >= 200, `cell ${i} ink ${at(i)} is too dim to read`);
+  for (const v of ink) assert.ok(v >= MIN_INK && v <= 255);
+});
+
+test('ink shift is the mean per-channel change, as a share of full scale', () => {
+  const a = new Uint8Array(COLS * ROWS * 3).fill(100);
+  assert.equal(inkShift(null, a), null);
+  assert.equal(inkShift(a, a), 0);
+  assert.equal(inkShift(a, Uint8Array.from(a, () => 151)), 51 / 255);
+});
+
+test('each glyph is drawn in its own cell\'s ink', () => {
+  const lines = toGlyphs(grid(() => 0.99));
+  const ink = new Uint8Array(COLS * ROWS * 3);
+  for (let i = 0; i < COLS * ROWS; i++) ink.set(i % 2 ? [200, 60, 60] : [60, 60, 200], i * 3);
+  const px = rasterise(lines, 'live', ink);
+  const colours = new Set();
+  for (let i = 0; i < px.length; i += 3) colours.add(`${px[i]},${px[i + 1]},${px[i + 2]}`);
+  assert.ok(colours.has('200,60,60') && colours.has('60,60,200'));
+  assert.ok(!colours.has(GLYPH_INK.join(',')), 'the mono ink was drawn as well');
 });

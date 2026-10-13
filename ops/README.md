@@ -29,7 +29,7 @@ ops/live.mjs                          the same pipeline against RTMPS (`npm run 
 ops/endless-memory-stream.service     systemd unit: render -> ffmpeg -> and the feeder
 ops/onair.mjs                         the off-host "is it live?" check, run by .github/workflows/on-air.yml
 ops/videoframe.mjs                    piece D: polls the Boston Light camera, writes ops/frames/*.png (not live yet)
-ops/asciiframe.mjs                    piece D: the luminance grid to ASCII to a 1280x720 PNG
+ops/asciiframe.mjs                    piece D: the luminance and colour grids to camera-inked ASCII, a 1280x720 PNG
 ops/framelog.mjs                      piece D: reads a videoframe log for criteria 3 and 8
 ```
 
