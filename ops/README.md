@@ -26,9 +26,10 @@ ops/placeholder.png                   the launch picture, 1280x720
 ops/measure.mjs                       level, pacing, A/V-sync and stall parsers and verdicts
 ops/tier0.mjs                         the local-sink proof run (`npm run tier0`)
 ops/live.mjs                          the same pipeline against RTMPS (`npm run live`)
-ops/endless-memory-stream.service     systemd unit: render -> ffmpeg -> and the feeder
+ops/endless-memory-stream.service     systemd unit: render -> ffmpeg -> and the feeder; sets FRAME_SOURCE
+ops/endless-memory-videoframe.service systemd unit: piece D, writing /var/lib/endless-memory-frames/*.png
 ops/onair.mjs                         the off-host "is it live?" check, run by .github/workflows/on-air.yml
-ops/videoframe.mjs                    piece D: polls the Boston Light camera, writes ops/frames/*.png (not live yet)
+ops/videoframe.mjs                    piece D: polls the Boston Light camera, writes the PNG videofeed reads
 ops/asciiframe.mjs                    piece D: the luminance and colour grids to camera-inked ASCII, a 1280x720 PNG
 ops/framelog.mjs                      piece D: reads a videoframe log for criteria 3 and 8
 ```
@@ -859,8 +860,11 @@ on the WSL2 host while the station is on the air, because it shares nothing with
   from that rsync, and nothing here writes there.
 - **No `systemctl` command that changes anything.** No restart, no stop, no daemon-reload;
   every restart ends the YouTube broadcast. The two read-only checks below are all.
-- **Its PNG goes to `/tmp/d`.** The production `videofeed` is started without
-  `FRAME_SOURCE`, so it reads no piece D frame at all, and this run cannot reach the air.
+- **Its PNG goes to `/tmp/d`.** The production `videofeed` reads only
+  `/var/lib/endless-memory-frames/` (its `FRAME_SOURCE`), so this run cannot reach the
+  air. Since piece D went on the air, a second poller here doubles the requests the
+  camera sees from this host — stop `endless-memory-videoframe` for the run, or read its
+  journal instead (see "Put piece D on the air").
 - **Under `nice -n 19`**, so the renderer always wins the CPU. The cost is one ffmpeg
   decode a minute (well under a second of one core on a 3840x2160 JPEG) and a PNG
   write every 2 s. Inbound traffic is about 400 KB a minute, roughly 560 MB over the day;
@@ -913,13 +917,46 @@ sudo rsync -a --delete ./ /opt/endless-memory/
 sudo install -d -m 0700 -o endless -g endless /etc/endless-memory
 sudo install -m 0600 -o endless -g endless /dev/null /etc/endless-memory/stream.env
 # then write CF_STREAM_KEY=... into that file, and nowhere else
-sudo cp ops/endless-memory-stream.service /etc/systemd/system/
+sudo cp ops/endless-memory-stream.service ops/endless-memory-videoframe.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now endless-memory-stream
+sudo systemctl enable --now endless-memory-videoframe endless-memory-stream
 ```
 
 The host must run NTP: the anchor **is** the wall clock. An unsynced clock is an
 alertable condition.
+
+## Put piece D on the air (2026-10-12)
+
+Two units, never bound to each other. `endless-memory-videoframe` polls the camera and
+rewrites `/var/lib/endless-memory-frames/boston-light-west.png` every 2 s; the stream
+unit's `Environment=FRAME_SOURCE=` points videofeed at that file. videofeed uses it while
+it is under 5 s old and otherwise holds the last good frame, or the placeholder if it
+never had one — so piece D starting, crashing or stopping never touches the broadcast.
+
+```sh
+# from a clone at the commit to deploy. Dry run first: it lists every file that would
+# change in /opt, and journal.json on the host may hold events the clone does not.
+sudo rsync -ani --chown=endless:endless --exclude .git --exclude node_modules ./ /opt/endless-memory/
+sudo rsync -a   --chown=endless:endless --exclude .git --exclude node_modules ./ /opt/endless-memory/
+sudo cp ops/endless-memory-videoframe.service ops/endless-memory-stream.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now endless-memory-videoframe   # starts writing frames; the air is unaffected
+systemctl is-active endless-memory-videoframe
+sudo systemctl restart endless-memory-stream            # picks up FRAME_SOURCE; ends the current YouTube broadcast
+systemctl is-active endless-memory-stream
+```
+
+Piece D's log is its journal, in the same JSON lines `ops/framelog.mjs` reads:
+
+```sh
+journalctl -u endless-memory-videoframe -o cat --since "24 hours ago" > /tmp/videoframe.log
+/usr/local/bin/node ops/framelog.mjs /tmp/videoframe.log
+```
+
+**Taking it off the air.** Stopping `endless-memory-videoframe` alone does not bring
+back the placeholder: videofeed holds the last good frame indefinitely. To return to
+the placeholder, delete the `Environment=FRAME_SOURCE=` line from the installed stream
+unit, `daemon-reload`, and restart the stream.
 
 ## Apply a journal change
 

@@ -1,0 +1,48 @@
+# Piece D: poll the Boston Light camera and keep a 1280x720 PNG for videofeed to read.
+# Install to /etc/systemd/system/.
+#
+# A separate unit from the stream, and never bound to it. Piece D is a file writer, not
+# a process in the broadcast path: videofeed (started by stream.sh) reads FRAME_SOURCE
+# and falls back to the last good frame or the placeholder on its own, so this unit can
+# crash, restart or be stopped without the broadcast noticing. ops/units.test.mjs pins
+# the shared path and the absence of any Requires/BindsTo/PartOf between the two.
+
+[Unit]
+Description=Endless Memory — piece D, the Boston Light camera as ASCII
+# Same reasoning as the stream unit: never give up. The cadence floor is RestartSec.
+StartLimitIntervalSec=0
+After=network-online.target time-sync.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=endless
+Group=endless
+WorkingDirectory=/opt/endless-memory
+
+# /usr/local/bin/node explicitly: /usr/bin/node is v12 on the production host.
+# stderr is the JSON log ops/framelog.mjs reads; journald keeps it. To read it:
+#   journalctl -u endless-memory-videoframe -o cat --since ... > /tmp/videoframe.log
+ExecStart=/usr/local/bin/node /opt/endless-memory/ops/videoframe.mjs run --out /var/lib/endless-memory-frames/boston-light-west.png
+
+Restart=always
+# A restart polls the camera at once. 60 s keeps a crash loop inside the one-request-a-
+# minute contract that the code keeps while it is running.
+RestartSec=60
+
+# /var/lib/endless-memory-frames: readable by the stream unit, whose ProtectSystem=strict
+# leaves /var/lib readable and whose PrivateTmp would hide anything under /tmp.
+StateDirectory=endless-memory-frames
+StateDirectoryMode=0755
+
+# The renderer always wins the CPU. One decode a minute, one PNG write every 2 s.
+Nice=19
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+
+[Install]
+WantedBy=multi-user.target
