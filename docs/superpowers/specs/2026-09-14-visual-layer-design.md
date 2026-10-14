@@ -710,8 +710,33 @@ ops/endless-memory-videoframe.service
 
    The cost is that a cell can settle one ramp step from the plain mapping and stay
    there. The log now carries `inkShift` beside `churn`, and `framelog.mjs` reports it per
-   hour. The 8% churn bar stands. Ink shift has no bar yet; set one after a real night of
-   it has been looked at.
+   hour. The 8% churn bar stands.
+
+   **Measured 2026-10-12 → 13 on the air, and passed.** This was the first night with the new
+   renderer, run as `endless-memory-videoframe.service` feeding the live stream (#73) from
+   22:16 EDT, and covers 24.5 hours of its journal read with `framelog.mjs`. Criterion 3
+   passed again: 1457 polls, shortest gap 60.4 s, and 100% of no-change polls were a 304.
+   Median smoothed churn by Boston hour:
+
+   | hour | 00 | 01 | 02 | 03 | 04 | 05 | day (07–17) |
+   |---|---|---|---|---|---|---|---|
+   | churn | 0.4% | 0.7% | 0.4% | 1.5% | 2.3% | 0.7% | 0.4–1.6% |
+   | ink shift | 0.7% | 0.7% | 1.1% | 0.9% | 0.8% | 1.0% | 0.4–0.8% |
+   | span | 110 | 115 | 117 | 55 | 39 | 93 | 87–136 |
+
+   The camera service did not restart and never left LIVE. The stream unit restarted once,
+   at 03:51, when the RTMPS connection to YouTube dropped (TLS "Broken pipe"); `cloudflared`
+   on the host was failing in the same minute. That is unrelated to piece D.
+
+   **This night was less dark than the one that failed.** Its lowest span was 39–55
+   levels, at 03:00–04:00, against 16–17 on 10/11 → 12, and those were also its
+   highest-churn hours. A night at the failing span has not yet been seen with sticky
+   glyphs. Re-read the log the first time `framelog.mjs` shows spans under 20.
+
+   **The ink-shift bar is 3% median per overnight hour**, set on 2026-10-12 →
+   13. That is about three times the worst hour measured (1.1%), and close to the 8/255 per
+   frame the simulated failing night produced. As of this record it is reported, not
+   enforced: `framelog.mjs` prints ink shift but does not fail criterion 8 on it.
 9. **The auto-level is verified to be load-bearing, by removing it.** A recorded night
    frame rendered with a fixed 0–255 mapping must produce the dead output recorded above —
    a near-uniform field. This exists so that a later reader who is tempted to simplify the
