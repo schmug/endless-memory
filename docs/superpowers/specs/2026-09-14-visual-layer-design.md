@@ -737,6 +737,26 @@ ops/endless-memory-videoframe.service
    13. That is about three times the worst hour measured (1.1%), and close to the 8/255 per
    frame the simulated failing night produced. As of this record it is reported, not
    enforced: `framelog.mjs` prints ink shift but does not fail criterion 8 on it.
+
+   **Measured 2026-11-02 → 03, and passed again.** A 25.0-hour log, 04:42Z to 05:42Z the
+   next day, from one process start, read with `framelog.mjs` on the WSL2 host. The
+   stream unit reported `NRestarts=0` afterwards. Criterion 3 passed: 1486 polls (1421
+   frames, 64 unchanged, 1 refused), shortest gap 60.4 s, none under 60 s, and 100% of
+   no-change polls were a 304. The User-Agent sent was `endless-memory/1.0 (generative
+   radio station; +https://github.com/schmug/endless-memory; contact via GitHub issues)`.
+   The one ladder transition was ARCHIVE → LIVE at start.
+
+   | hour | 00 | 01 | 02 | 03 | 04 | 05 | day (07–17) |
+   |---|---|---|---|---|---|---|---|
+   | churn | 0.0% | 0.0% | 0.0% | 0.0% | 0.1% | 0.4% | 0.2–1.4% |
+   | p90 churn | 0.1% | 0.1% | 0.0% | 0.2% | 0.1% | 6.3% | 0.4–3.9% |
+   | ink shift | 0.7% | 0.7% | 0.7% | 0.7% | 0.7% | 1.0% | 0.4–1.1% |
+   | span | 61 | 60 | 59 | 58 | 58 | 62 | 78–142 |
+
+   The worst overnight ink shift was 1.0%, under the 3% bar. The busiest hour was 06:00
+   at dawn, outside the overnight window: median churn 1.8%, p90 9.0%, span 124. **The
+   night was again not as dark as the failing one.** Its lowest span was 58, against 16–17
+   on 10/11 → 12, so sticky glyphs at the failing span are still unseen.
 9. **The auto-level is verified to be load-bearing, by removing it.** A recorded night
    frame rendered with a fixed 0–255 mapping must produce the dead output recorded above —
    a near-uniform field. This exists so that a later reader who is tempted to simplify the
